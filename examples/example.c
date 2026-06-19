@@ -37,15 +37,16 @@ static void arena_hexdump(Arena* arena)
     u64 n = arena->pos;
 
 
-    printf("------  ARENA --------------------\n");
-    printf(" Base Address : 0x%016llX\n",    (unsigned long long)(uintptr_t)arena->base);
-    printf("     Reserved : %12llu bytes\n", (unsigned long long)arena->reserved_size);
-    printf("    Committed : %12llu bytes\n", (unsigned long long)arena->commit_size);
-    printf("     Position : %12llu bytes\n", (unsigned long long)arena->pos);
-    printf("        Flags :         "); print_binary_u8(arena->flags); printf("\n");
-    printf("----------------------------------\n");
-    printf("sizeof(Arena) : %12llu bytes\n", sizeof(Arena));
-    printf("==================================\n");
+    printf("------  ARENA ------------------------------\n");
+    printf("       Base Address :     0x%016llX\n",    (unsigned long long)(uintptr_t)arena->base);
+    printf("    Reserved Memory : %16llu bytes (%.2f MB)\n", (unsigned long long)arena->reserved_size, (f64)arena->reserved_size / MB(1));
+    printf("   Committed Memory : %16llu bytes (%.2f KB)\n", (unsigned long long)arena->commit_size, (f64)arena->commit_size / KB(1));
+    printf("           Position : %16llu bytes\n", (unsigned long long)arena->pos);
+    printf("              Flags :             "); print_binary_u8(arena->flags); printf("\n");
+    printf(" Commit Granularity : %16u pages\n", arena->granularity);
+    printf("--------------------------------------------\n");
+    printf("sizeof(Arena) : %16llu bytes\n", sizeof(Arena));
+    printf("============================================\n");
 
     printf("\n");
     printf(" OFFSET    BYTES                                             ASCII\n");
@@ -126,6 +127,14 @@ int main(void)
     printf("Mutable string:\t" STR8_FMT "\n", STR8_ARG(mutable));
     printf("\n");
 
+    // - UNITS 
+    printf("--- UNIT MACROS ---------------------\n");
+    printf("KB(1) = %14llu bytes\n", KB(1));
+    printf("MB(1) = %14llu bytes\n", MB(1));
+    printf("GB(1) = %14llu bytes\n", GB(1));
+    printf("TB(1) = %14llu bytes\n", TB(1));
+    printf("\n");
+
     // - BIT FIELDS
 
     printf("--- BIT FIELDS ---------------------\n");
@@ -160,31 +169,23 @@ int main(void)
     // - ARENAS
     printf("--- ARENAS -------------------------\n");
     printf("\n");
-    printf("--- Alloc : reserve KB(64), commit KB(0)\n");
-    printf("--- flags : ArenaFlags_Decommit |\n");
-    printf("            ArenaFlags_DebugFillOnClear\n");
+    printf("--- Alloc : reserve MB(4)");
     printf("\n");
-    Arena arena = arena_alloc(KB(64), 0);
-    arena.flags = ArenaFlags_Decommit | ArenaFlags_DebugFillOnClear;
+    Arena arena = arena_alloc(MB(4));
     arena_hexdump(&arena);
-
-    printf("\n");
-    printf("--- Push : u32, char[5], u64[10], vec2[10]\n");
-    printf("---      : u32    -> 0x12345678\n");
-    printf("---      : char[] -> `hello'\n");
-    printf("---      : save position\n");
-    printf("---      : u64[]  -> {0 .. 9}\n");
-    printf("---      : vec2[] -> {0}\n");
-
-    printf("\n");
 
     u32* a = arena_push_t(&arena, u32);
     *a = 0x12345678;
 
-    cstr8 hello = STR("hello");
-    u8* text = arena_push_array(&arena, u8, hello.size);
-    memcpy(text, hello.data, hello.size);
-    u64 pos = arena.pos;
+    /* no-zero terminiation */
+    str8 hello = arena_push_str8_copy(&arena, STR("hello") );
+    /* with terminiation */
+    const char* world = arena_push_cstring(&arena, ", world!");
+
+    str8 fmt_str8 = arena_push_str8_fmt(&arena, "fmt %s %d", "str8: a = ", *a);
+    const char* fmt_char = arena_push_cstring_fmt(&arena, "fmt %s %d", "char*: a = ", *a);
+
+    u64 mark1 = arena.pos;
 
     u64* data = arena_push_array(&arena, u64, 10);
     for (u64 i = 0; i < 10; ++i)
@@ -197,17 +198,42 @@ int main(void)
     } test_vec2;
 
     test_vec2* vecs = arena_push_array(&arena, test_vec2, 10);
+    u64 mark2 = arena.pos;
+
+    printf("\n");
+    printf("--- Push : u32      -> 0x12345678\n");
+    printf("--- Push : st8      -> `hello'\n");
+    printf("--- Push : char*    -> `, world!`\n");
+    printf("--- Push : st8      -> formatted\n");
+    printf("--- Push : char*    -> frmatted\n");
+    printf("   mark1 : save position (%llu)\n", mark1);
+    printf("--- Push : u64[10]  -> {0 .. 9}\n");
+    printf("--- Push : vec2[10] -> {0}\n");
+    printf("   mark2 : save position (%llu)\n", mark2);
+    printf("\n");
 
     arena_hexdump(&arena);
+
+    arena_pop_to(&arena, mark1);
     printf("\n");
-    printf("--- pop : to saved position\n");
+    printf("--- pop : to saved position (%llu)\n", mark1);
+    printf("        : decommit and fill dependent on flags, check below ..\n");
     printf("\n");
-    arena_pop_to(&arena, pos);
+    printf("arena.base[%3llu .. %4llu] = { ", mark1-1, mark2-1);
+    for (u64 i = 0; i < 5; ++i)
+        printf("0x%02X ", arena.base[arena.pos+i]);
+    printf(" ... 0x%02X }\n", arena.base[mark2-1]);
+    printf("arena.base[%3llu .. %4llu] = { ", mark2, arena.commit_size-1);
+    for (u64 i = 0; i < 5; ++i)
+        printf("0x%02X ", arena.base[mark2+i]);
+    printf(" ... 0x%02X }\n", arena.base[arena.commit_size-1]);
+    printf("\n");
+
     arena_hexdump(&arena);
-    u32* new_data = arena_push_array_nozero(&arena, u32, 20);
+
+    u32* new_data = arena_push_array(&arena, u32, 20);
     printf("\n");
-    printf("--- push : u32[20] (nozero)\n");
-    printf("---      : unitialized, old u64 data still lives in memory\n");
+    printf("--- push : u32[20]\n");
     printf("---      : u32[0] -> %d\n", new_data[0]);
     printf("\n");
 

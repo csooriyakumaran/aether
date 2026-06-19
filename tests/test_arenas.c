@@ -3,7 +3,7 @@
 
 int main(void)
 {
-    Arena arena = arena_alloc(MB(1), 0);
+    Arena arena = arena_alloc(MB(1));
 
     u64 p0 = arena.pos;
     u32* x = arena_push_t(&arena, u32);
