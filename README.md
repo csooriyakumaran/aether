@@ -73,6 +73,8 @@ Allocation occur from `base + pos`. The position is advanced after each push.
 | `ArenaFlags_CommitChunked`    | `BIT(1)` | Commit memory in larger chunks (defined by `granularity`)                   |
 | `ArenaFlags_AlwaysZero`       | `BIT(2)` | Zero memory for every allocation that follows the arena policy. Default push macros obey this flag; explicit `_zero` helpers force zeroing regardless of policy   |
 | `ArenaFlags_DebugFillOnClear` | `BIT(3)` | fill invalidated memory with `0xDD` when popping/clearing                   |
+
+
 ***Example***
 
 ```c
