@@ -30,6 +30,13 @@ extern "C"
     #define DEBUG_BREAK() __builtin_trap()
 #endif // _MSC_VER
 
+#if defined(__cplusplus)
+    #define ARENA_ALIGN(T) alignof(T)
+#else
+    #define ARENA_ALIGN(T) _Alignof(T)
+#endif // __cplusplus
+
+
 /*----------------------------------------------------------------------------*/
 
 #ifndef AETHER_ENABLE_ASSERTS
@@ -44,7 +51,7 @@ extern "C"
     #include <stdio.h>
     #define ASSERT(x) do {                                                                      \
         if (!(x)) {                                                                             \
-            fprintf(stderr, "ASSERT FAIED: %s [\%s:%d]\n", #x, __FILE__, __LINE__); \
+            fprintf(stderr, "ASSERT FAILED: %s [%s:%d]\n", #x, __FILE__, __LINE__); \
             DEBUG_BREAK();                                                                      \
         }                                                                                       \
     } while (0)
@@ -85,12 +92,12 @@ typedef struct cstr8 { const u8* data; u64 size; } cstr8;
 
 /*----------------------------------------------------------------------------*/
 
-#define BIT_U8(x)  ((u8)  (1u   << (x)))
-#define BIT_U16(x) ((u16) (1u   << (x)))
-#define BIT_U32(x) ((u32) (1u   << (x)))
-#define BIT_U64(x) ((u64) (1ull << (x)))
+#define BIT8(x)  ((u8)  (1u   << (x)))
+#define BIT16(x) ((u16) (1u   << (x)))
+#define BIT32(x) ((u32) (1u   << (x)))
+#define BIT64(x) ((u64) (1ull << (x)))
 
-#define BIT(x) BIT_U64(x)
+#define BIT(x) BIT64(x)
 
 #define KB(n) (((u64)(n)) << 10)
 #define MB(n) (((u64)(n)) << 20)
@@ -99,17 +106,15 @@ typedef struct cstr8 { const u8* data; u64 size; } cstr8;
 
 /*-------- A R E N A S -------------------------------------------------------*/
 
-#define ARENA_DEFAULT_ALIGNMENT sizeof(void*)
-#define ARENA_DEFAULT_COMMIT_PAGES 64
-
+// todo(chris): ArenaFlags may need to grow to u16 or u32 if other options are added
 typedef u8 ArenaFlags;
 enum ArenaFlags_
 {
     ArenaFlags_None             = 0u,
-    ArenaFlags_Decommit         = BIT(0), /* Decommit memory when popping/clearing arena    */
-    ArenaFlags_CommitChunked    = BIT(1), /* Only commit a page count of ARENA_DEFAULT_COMMIT_PAGES */
-    ArenaFlags_AlwaysZero       = BIT(2), /* Always zero memory                             */
-    ArenaFlags_DebugFillOnClear = BIT(3)  /* On clear, set bytes to 0xDD for debugging      */
+    ArenaFlags_Decommit         = BIT8(0), /* Decommit memory when popping/clearing arena    */
+    ArenaFlags_CommitChunked    = BIT8(1), /* Only commit a page count set by granularity field */
+    ArenaFlags_AlwaysZero       = BIT8(2), /* Always zero memory                             */
+    ArenaFlags_DebugFillOnClear = BIT8(3)  /* On clear, set bytes to 0xDD for debugging      */
 };
 
 typedef struct Arena
@@ -119,10 +124,12 @@ typedef struct Arena
     u64 commit_size;
     u64 pos;
 
+    u32 granularity;
     ArenaFlags flags;
 } Arena;
 
-Arena arena_alloc(u64 reserve_size, u64 initial_commit_size);
+Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, ArenaFlags flags, u32 commit_page_granularity);
+Arena arena_alloc(u64 reserve_size);
 void  arena_release(Arena* arena);
 
 void* arena_push(Arena* arena, u64 size, u64 align, b8 zero);
@@ -131,11 +138,21 @@ void  arena_pop_to(Arena* arena, u64 pos);
 
 void  arena_clear(Arena* arena);
 
-#define arena_push_t(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_DEFAULT_ALIGNMENT, 1)
-#define arena_push_t_nozero(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_DEFAULT_ALIGNMENT, 0)
+// default arena_push will respect zeroing policy controlled by ArenaFlags
+#define arena_push_t(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), 0)
+#define arena_push_array(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), 0)
 
-#define arena_push_array(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_DEFAULT_ALIGNMENT, 1)
-#define arena_push_array_nozero(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_DEFAULT_ALIGNMENT, 0)
+// explicity force zeroing after push regargless of ArenaFlags
+#define arena_push_t_zero(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), 1)
+#define arena_push_array_zero(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), 1)
+
+// strings on the arena
+char* arena_push_cstring(Arena* arena, const char* src);
+char* arena_push_cstring_fmt(Arena* arena, const char* fmt, ...);
+
+str8  arena_push_str8_copy(Arena* arena, cstr8 src);
+str8  arena_push_str8_from_cstring(Arena*, const char* src);
+str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...);
 
 #ifdef __cplusplus
 }
@@ -143,11 +160,12 @@ void  arena_clear(Arena* arena);
 
 #endif // AETHER_H_
 
-
 /*---------------------------------------------------------------------------*/
 #ifdef AETHER_IMPLEMENTATION
 
 #include <string.h>
+#include <stdio.h>
+#include <stdarg.h>
 
 #ifdef _WIN32
     #ifndef WIN32_LEAN_AND_MEAN
@@ -162,9 +180,14 @@ void  arena_clear(Arena* arena);
 
 #endif // _WIN32
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif // __cplusplus
 
 static u64 os_mem_pagesize(void)
 {
+    // todo(chris): this is not threadsafe, likely also not needed to be cached. Consider removing static global state. 
     static u64 pagesize = 0;
 
     if (pagesize == 0) 
@@ -237,7 +260,7 @@ static void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
     u64 pagesize = os_mem_pagesize();
 
     if ((arena->flags & ArenaFlags_CommitChunked) != 0)
-        new_commit_size = align_forward_u64(new_pos, pagesize * ARENA_DEFAULT_COMMIT_PAGES);
+        new_commit_size = align_forward_u64(new_pos, pagesize * arena->granularity);
     else
         new_commit_size = align_forward_u64(new_pos, pagesize);
 
@@ -275,8 +298,7 @@ static void arena_decommit_tail(Arena* arena, u64 new_pos)
     return;
 }
 
-
-Arena arena_alloc(u64 reserve_size, u64 initial_commit_size)
+Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, ArenaFlags flags, u32 commit_page_granularity)
 {
     ASSERT(reserve_size > 0);
 
@@ -302,8 +324,30 @@ Arena arena_alloc(u64 reserve_size, u64 initial_commit_size)
     arena.reserved_size = reserve_size;
     arena.commit_size   = initial_commit_size;
     arena.pos           = 0;
+    arena.flags         = flags;
+    arena.granularity   = commit_page_granularity;
 
     return arena;
+
+}
+
+Arena arena_alloc(u64 reserve_size)
+{
+#if AETHER_ENABLE_ASSERTS
+    // Debug defaults
+    u64        initial_commit = 0;
+    ArenaFlags flags          = ArenaFlags_AlwaysZero | 
+                                ArenaFlags_DebugFillOnClear |
+                                ArenaFlags_Decommit;
+    u32 granularity           = 1; /* commit and decommit single-page units */
+#else 
+    // Performance defaults
+    u64        initial_commit = 0;
+    ArenaFlags flags          = ArenaFlags_None;
+    u32        granularity    = 1;
+#endif
+    return arena_alloc_ex(reserve_size, initial_commit, flags, granularity);
+
 }
 
 
@@ -321,9 +365,19 @@ void arena_release(Arena* arena)
 
 void* arena_push(Arena* arena, u64 size, u64 align, b8 zero)
 {
-    u64 aligned_pos = align_forward_u64(arena->pos, align);
-    u64 new_pos     = aligned_pos + size;
+    ASSERT(arena->pos <= arena->reserved_size);
 
+    u64 aligned_pos = align_forward_u64(arena->pos, align);
+    ASSERT(aligned_pos <= arena->reserved_size);
+
+    // catch u64 overflow
+    if (size > arena->reserved_size - aligned_pos)
+    {
+        ASSERT(!"arena_push overflow: allocation exceeds reserved size");
+        return NULL;
+    }
+
+    u64 new_pos = aligned_pos + size;
     ASSERT(new_pos <= arena->reserved_size);
 
     if (new_pos > arena->commit_size)
@@ -332,9 +386,9 @@ void* arena_push(Arena* arena, u64 size, u64 align, b8 zero)
     arena->pos = new_pos;
     void* result = arena->base + aligned_pos;
 
-    // - memset to zero if we explicity ask, or if AlwaysZero Policy is set
+    // - memset to zero if we explicitly ask, or if AlwaysZero Policy is set
     if (zero || (arena->flags & ArenaFlags_AlwaysZero) != 0)
-        memset(result, 0, size);
+        memset(result, 0, (size_t)size);
 
     return result;
 
@@ -368,6 +422,100 @@ void arena_clear(Arena* arena)
     arena_pop_to(arena, 0);
 }
 
+char* arena_push_cstring(Arena* arena, const char* src)
+{
+    size_t len = strlen(src);
+    char *dst = (char*)arena_push(arena, (u64)len + 1, 1, 1);
+    memcpy(dst, src, len + 1);
+    return dst;
+
+}
+
+static inline char* arena_push_cstring_fmtv(Arena* arena, const char* fmt, va_list args)
+{
+    va_list args_copy;
+    va_copy(args_copy, args);
+
+    int len = vsnprintf(NULL, 0, fmt, args_copy);
+    va_end(args_copy);
+
+    ASSERT (len >= 0);
+
+    /* use 1-byte alignement to maximum packing */
+    char* buffer = (char*)arena_push(arena, (u64)len + 1, 1, 1);
+    int written = vsnprintf(buffer, (size_t)len + 1, fmt, args);
+    ASSERT(written == len);
+
+    return buffer;
+}
+
+char* arena_push_cstring_fmt(Arena* arena, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    char* result = arena_push_cstring_fmtv(arena, fmt, args);
+    va_end(args);
+    return result;
+}
+
+str8  arena_push_str8_copy(Arena* arena, cstr8 src)
+{
+    str8 result;
+    result.size = src.size;
+    result.data = (u8*)arena_push(arena, src.size, 1, 0);
+    memcpy(result.data, src.data, src.size);
+    return result;
+
+}
+
+str8  arena_push_str8_from_cstring(Arena* arena, const char* src)
+{
+    size_t len = strlen(src);
+    char*  dst = (char*)arena_push(arena, (u64)len + 1, 1, 1);
+    memcpy(dst, src, len + 1);
+
+    str8 result;
+    result.data = (u8*)dst;
+    result.size = (u64)len; /* excludes the null terminator */
+    return result;
+}
+
+static inline str8  arena_push_str8_fmtv(Arena* arena, const char* fmt, va_list args)
+{
+    va_list args_copy;
+    va_copy(args_copy, args);
+
+    int len = vsnprintf(NULL, 0, fmt, args_copy);
+
+    va_end(args_copy);
+
+    ASSERT(len >= 0);
+
+    char* buffer = (char*)arena_push(arena, (u64)len + 1, 1, 1);
+
+    int written = vsnprintf(buffer, (size_t)len + 1, fmt, args);
+    ASSERT(written == len);
+
+    str8 result;
+    result.data = (u8*)buffer;
+    result.size = (u64)len; /* excludes null terminator */
+    return result;
+
+}
+
+str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    str8 result = arena_push_str8_fmtv(arena, fmt, args);
+    va_end(args);
+    return result;
+}
+
+
+#ifdef __cplusplus
+}
+#endif // __cplusplus
 
 #endif // AETHER_IMPLEMENTATION
 /*---------------------------------------------------------------------------*/
