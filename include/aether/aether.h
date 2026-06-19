@@ -128,7 +128,7 @@ typedef struct Arena
     ArenaFlags flags;
 } Arena;
 
-Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, ArenaFlags flags, u32 commit_page_granularity);
+Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags);
 Arena arena_alloc(u64 reserve_size);
 void  arena_release(Arena* arena);
 
@@ -298,7 +298,7 @@ static void arena_decommit_tail(Arena* arena, u64 new_pos)
     return;
 }
 
-Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, ArenaFlags flags, u32 commit_page_granularity)
+Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags)
 {
     ASSERT(reserve_size > 0);
 
@@ -346,7 +346,7 @@ Arena arena_alloc(u64 reserve_size)
     ArenaFlags flags          = ArenaFlags_None;
     u32        granularity    = 1;
 #endif
-    return arena_alloc_ex(reserve_size, initial_commit, flags, granularity);
+    return arena_alloc_ex(reserve_size, initial_commit, granularity, flags);
 
 }
 

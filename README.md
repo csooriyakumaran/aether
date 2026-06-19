@@ -75,16 +75,31 @@ Allocation occur from `base + pos`. The position is advanced after each push.
 | `ArenaFlags_DebugFillOnClear` | `BIT(3)` | fill invalidated memory with `0xDD` when popping/clearing                   |
 
 
-***Example***
+***Example: arena_alloc***
 
 ```c
-/* reserve 64 MB but commit nothing initially */
-Arena arena = arena_alloc(MB(64), 0);
+/* reserve 64 MB */
+Arena arena = arena_alloc(MB(64));
 
 arena.flags =
     ArenaFlags_Decommit |         /* when popping/clearing, decommit unused pages */
-    ArenaFlags_CommitChunked |    /* when allocating, commit 64 pages at a time */
-    ArenaFlags_DebugFillOnClear;  /* when popping/clearning, fill any remaining committed memory with 0xDD */
+    ArenaFlags_DebugFillOnClear;  /* when popping/clearing, fill any remaining committed memory with 0xDD */
+```
+
+***Example: arena_alloc_ex**
+
+For finer control:
+
+```c
+u64 initial_commit_size = KB(4);  /* initially commit 4 KB of memory */
+u32 commit_page_granularity = 64; /* every time we need to commit more memory, commit in chunks of 64 pages */
+ArenaFlags flags = 
+    ArenaFlags_Decommit |         /* when popping/clearing, decommit unused pages */
+    ArenaFlags_CommitChunked |    /* when allocating requires more memory, commit the number of pages defined above */
+    ArenaFlags_DebugFillOnClear;  /* when popping/clearing, fill any remaining committed memory with 0xDD */
+
+/* reserve 64 MB,  */
+Arena arena = arena_alloc_ex(MB(64), initial_commit_size, commit_page_granularity, flags);
 ```
 
 ### Allocation
