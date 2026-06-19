@@ -66,7 +66,7 @@ Allocation occur from `base + pos`. The position is advanced after each push.
 | `ArenaFlags_AlwaysZero`    | `BIT(2)` | Zero memory for every allocation, regardless of the push call |
 | `ArenaFlags_DebugFillOnClear`    | `BIT(3)` | fill invalidated memory with `0xDD` when popping/clearing |
 
-**Example**
+***Example***
 
 ```c
 /* reserve 64 MB but commit nothing initially */
@@ -89,7 +89,8 @@ void arena_push(Arena* arena, u64 size, u64 align, b8 zero);
 /* push to arena `size` bytes, padded to `alignment`, and explicitly zero the memory */
 void* memory = arena_push(&arena, size, alignment, true);
 ```
-Convenience macros are provided for common typed and array allocations:
+
+Convenience macros are provided for common typed and array allocations. Default alignment is 8-bytes, and the default behaviour is to zero the allocated memory. 
 
 ```c
 /* push one u32 onto the arena */
@@ -106,4 +107,27 @@ u8* bytes = arena_push_array_nozero(&arena, u8, 256);
 
 > [!NOTE] 
 >  Note that newly committed pages may still be zeroed by the operating system
+
+### Lifetime Model
+
+AETHER arenas are designed for bulk lifetime management:
+
+```c
+/* save the position for later */
+u64 mark = arena.pos;
+
+TemporaryThing *tmp = arena_push_t(&arena, TemporaryThing);
+
+/* use temporary allocations */
+
+arena_pop_to(&arena, mark);
+```
+
+***Common Patterns***
+
+| PATTERN         | DESCRIPTION                                                           |
+| --------------- | --------------------------------------------------------------------- |
+| Permament Arena | holds memory for lifetime of program, e.g. for application state/data |
+| Frame Arena     | Clear once per frame or iteration, should not decommit                |
+| Scratch Arena   | Save `pos`, allocate temparary data, then pop back                    |
 
