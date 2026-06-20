@@ -439,7 +439,7 @@ void arena_clear(Arena* arena)
 char* arena_push_cstring(Arena* arena, const char* src)
 {
     size_t len = strlen(src);
-    char *dst = (char*)arena_push(arena, (u64)len + 1, 1, 1);
+    char *dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
     memcpy(dst, src, len + 1);
     return dst;
 
@@ -456,7 +456,7 @@ static inline char* arena_push_cstring_fmtv(Arena* arena, const char* fmt, va_li
     ASSERT (len >= 0);
 
     /* use 1-byte alignement to maximum packing */
-    char* buffer = (char*)arena_push(arena, (u64)len + 1, 1, 1);
+    char* buffer = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
     int written = vsnprintf(buffer, (size_t)len + 1, fmt, args);
     ASSERT(written == len);
 
@@ -476,7 +476,7 @@ str8  arena_push_str8_copy(Arena* arena, cstr8 src)
 {
     str8 result;
     result.size = src.size;
-    result.data = (u8*)arena_push(arena, src.size, 1, 0);
+    result.data = (u8*)arena_push(arena, src.size, 1, ArenaZero_FollowPolicy);
     memcpy(result.data, src.data, src.size);
     return result;
 
@@ -485,7 +485,7 @@ str8  arena_push_str8_copy(Arena* arena, cstr8 src)
 str8  arena_push_str8_from_cstring(Arena* arena, const char* src)
 {
     size_t len = strlen(src);
-    char*  dst = (char*)arena_push(arena, (u64)len + 1, 1, 1);
+    char*  dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
     memcpy(dst, src, len + 1);
 
     str8 result;
@@ -505,7 +505,7 @@ static inline str8  arena_push_str8_fmtv(Arena* arena, const char* fmt, va_list 
 
     ASSERT(len >= 0);
 
-    char* buffer = (char*)arena_push(arena, (u64)len + 1, 1, 1);
+    char* buffer = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
 
     int written = vsnprintf(buffer, (size_t)len + 1, fmt, args);
     ASSERT(written == len);
