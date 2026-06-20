@@ -1,4 +1,4 @@
-  ## Roadmap toward v0.0.2 and beyond
+  ## Roadmap toward v0.0.3 and beyond
 
 ### Features (new capability)
 
