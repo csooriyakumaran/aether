@@ -113,8 +113,7 @@ typedef struct cstr8 { const u8* data; u64 size; } cstr8;
 
 // todo(chris): ArenaFlags may need to grow to u16 or u32 if other options are added
 typedef u8 ArenaFlags;
-enum ArenaFlags_
-{
+enum ArenaFlags_ {
     ArenaFlags_None             = 0u,
     ArenaFlags_Decommit         = BIT8(0), /* Decommit memory when popping/clearing arena    */
     ArenaFlags_CommitChunked    = BIT8(1), /* Only commit a page count set by granularity field */
@@ -128,8 +127,7 @@ typedef enum ArenaZero {
     ArenaZero_Never        = 2
 } ArenaZero;
 
-typedef struct Arena
-{
+typedef struct Arena {
     u8* base;
     u64 reserved_size;
     u64 commit_size;
@@ -169,6 +167,18 @@ char* arena_push_cstring_fmt(Arena* arena, const char* fmt, ...);
 str8  arena_push_str8_copy(Arena* arena, cstr8 src);
 str8  arena_push_str8_from_cstring(Arena*, const char* src);
 str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...);
+
+/*-------- M E M - M A P P I N G  -------------------------------------------*/
+
+typedef struct FileMapping {
+    u8*   data;    /* NULL on failure */
+    u64   size;    /* file size in bytes */
+    void* handle;  /* mapping HANDLE on windows; opaque elsewhere */
+} FileMapping;
+
+// todo(chris): figure out api
+b8    os_file_map(const char* path, FileMapping* out);
+void  os_file_unmap(FileMapping* mapping);
 
 #ifdef __cplusplus
 }
