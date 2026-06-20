@@ -48,5 +48,11 @@ if(AETHER_BUILD_TESTS)
 endif()
 
 if (AETHER_BUILD_INSTALL)
-    # todo
+    include(GNUInstallDirs)
+
+    install(DIRECTORY include/aether DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/aether/aether-version.h
+            DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/aether
+    )
+    install(FILES README.md LICENSE VERSION DESTINATION .)
 endif()
