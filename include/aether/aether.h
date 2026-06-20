@@ -13,6 +13,7 @@
 #define AETHER_H_
 
 #include "aether/aether-version.h"
+#include <stdlib.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -59,6 +60,10 @@ extern "C"
     #define ASSERT(x) ((void)0)
 #endif // AETHER_ENABLE_ASSERTS
 
+#define FATAL(msg) do {  \
+    fprintf(stderr, "FATAL ERROR: %s [%s:%d]\n", msg, __FILE__, __LINE__); \
+    DEBUG_BREAK(); abort(); \
+} while(0)
 
 #define ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -117,6 +122,12 @@ enum ArenaFlags_
     ArenaFlags_DebugFillOnClear = BIT8(3)  /* On clear, set bytes to 0xDD for debugging      */
 };
 
+typedef enum ArenaZero {
+    ArenaZero_FollowPolicy = 0,
+    ArenaZero_Force        = 1,
+    ArenaZero_Never        = 2
+} ArenaZero;
+
 typedef struct Arena
 {
     u8* base;
@@ -132,19 +143,24 @@ Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_
 Arena arena_alloc(u64 reserve_size);
 void  arena_release(Arena* arena);
 
-void* arena_push(Arena* arena, u64 size, u64 align, b8 zero);
+void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero);
 void  arena_pop(Arena* arena, u64 amt);
 void  arena_pop_to(Arena* arena, u64 pos);
 
 void  arena_clear(Arena* arena);
 
 // default arena_push will respect zeroing policy controlled by ArenaFlags
-#define arena_push_t(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), 0)
-#define arena_push_array(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), 0)
+#define arena_push_t(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), ArenaZero_FollowPolicy)
+#define arena_push_array(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), ArenaZero_FollowPolicy)
 
 // explicity force zeroing after push regargless of ArenaFlags
-#define arena_push_t_zero(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), 1)
-#define arena_push_array_zero(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), 1)
+#define arena_push_t_zero(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), ArenaZero_Force)
+#define arena_push_array_zero(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), ArenaZero_Force)
+
+// todo(chris): figure out the semantics
+// explicity force no-zeroing after push regargless of ArenaFlags
+#define arena_push_t_nozero(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), ArenaZero_Never)
+#define arena_push_array_nozero(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), ArenaZero_Never)
 
 // strings on the arena
 char* arena_push_cstring(Arena* arena, const char* src);
@@ -187,21 +203,16 @@ extern "C"
 
 static u64 os_mem_pagesize(void)
 {
-    // todo(chris): this is not threadsafe, likely also not needed to be cached. Consider removing static global state. 
-    static u64 pagesize = 0;
 
-    if (pagesize == 0) 
-    {
 #ifdef _WIN32
         SYSTEM_INFO sysinfo = {0};
         GetSystemInfo(&sysinfo);
-        pagesize = (u64)sysinfo.dwPageSize; 
+        u64 pagesize = (u64)sysinfo.dwPageSize; 
+        return pagesize;
 #else
         #error "AETHER: OS memory page size not implemented for this platform"
 #endif
-    }
 
-    return pagesize;
 }
 
 static void* os_mem_reserve(u64 size)
@@ -260,14 +271,17 @@ static void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
     u64 pagesize = os_mem_pagesize();
 
     if ((arena->flags & ArenaFlags_CommitChunked) != 0)
-        new_commit_size = align_forward_u64(new_pos, pagesize * arena->granularity);
-    else
+    {
+        u32 page_granularity = arena->granularity > 0 ? arena->granularity : 1;
+        new_commit_size = align_forward_u64(new_pos, pagesize * page_granularity);
+    } else {
         new_commit_size = align_forward_u64(new_pos, pagesize);
+    }
 
     new_commit_size = MIN(new_commit_size, arena->reserved_size);
         
     b8 committed = os_mem_commit(arena->base + arena->commit_size, new_commit_size - arena->commit_size);
-    ASSERT(committed);
+    if(!committed) FATAL("Memory commit faild");
 
     arena->commit_size = new_commit_size;
 
@@ -313,12 +327,12 @@ Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_
         initial_commit_size = reserve_size;
 
     arena.base   = (u8*)os_mem_reserve(reserve_size);
-    ASSERT(arena.base);
+    if (!arena.base) FATAL("Failed to reserve memory");
 
     if (initial_commit_size > 0)
     {
         b8 committed = os_mem_commit(arena.base, initial_commit_size);
-        ASSERT(committed);
+        if(!committed) FATAL("Failed to commit memory");
     }
 
     arena.reserved_size = reserve_size;
@@ -363,7 +377,7 @@ void arena_release(Arena* arena)
 }
 
 
-void* arena_push(Arena* arena, u64 size, u64 align, b8 zero)
+void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
 {
     ASSERT(arena->pos <= arena->reserved_size);
 
@@ -386,8 +400,8 @@ void* arena_push(Arena* arena, u64 size, u64 align, b8 zero)
     arena->pos = new_pos;
     void* result = arena->base + aligned_pos;
 
-    // - memset to zero if we explicitly ask, or if AlwaysZero Policy is set
-    if (zero || (arena->flags & ArenaFlags_AlwaysZero) != 0)
+    // ways to get zeroed mem: 1. forced, 2. policy and not never
+    if ( (zero == ArenaZero_Force) || ( (zero == ArenaZero_FollowPolicy) && (arena->flags & ArenaFlags_AlwaysZero) != 0 ))
         memset(result, 0, (size_t)size);
 
     return result;

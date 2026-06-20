@@ -412,8 +412,19 @@ static TestCase g_cases[] = {
 int main(int argc, char** argv)
 {
     if (argc > 1) {
-        for (size_t i = 0; i < ARRAY_COUNT(g_cases); ++i)
-            if (strcmp(argv[1], g_cases[i].name) == 0) { g_cases[i].fn(); break; }
+        for (size_t i = 0; i < ARRAY_COUNT(g_cases)+1; ++i)
+        {
+            if (i == ARRAY_COUNT(g_cases))
+            {
+                fprintf(stderr, "unknown test case: %s\n", argv[1]);
+                return 1; /* signal a fail if no test case found */
+            }
+            if (strcmp(argv[1], g_cases[i].name) == 0)
+            {
+                g_cases[i].fn();
+                break;
+            }
+        }
     } else {
         for (size_t i = 0; i < ARRAY_COUNT(g_cases); ++i) g_cases[i].fn();
         section_summary_flush();

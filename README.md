@@ -20,6 +20,9 @@ AETHER provides a simple linear arena allocator.
 
 An arena reserves a block of virtual address space and commits memory as needed. Allocations are performed by bumping a position pointer forward. Individual allocations are not freed; instead, memory is in bulk by popping, clearing, or releasing the arena. 
 
+> [!NOTE]
+> Reservation and commit failures (e.g. out of memory) are treated as fatal and abort the program immediately — there is no recoverable error path.
+
 ```c
 /* reserve 64 MB of virtual address space.
    The simple arena_alloc() API chooses sensible defaults based on build configuration:
@@ -108,15 +111,16 @@ Use `arena_push` for explicit control:
 
 ```c
 /* declared in aether/aether.h */
-void arena_push(Arena* arena, u64 size, u64 align, b8 zero);
+void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero);
 
 /* push to arena `size` bytes, padded to `alignment`, and explicitly zero the memory */
-void* memory = arena_push(&arena, size, alignment, true);
+void* memory = arena_push(&arena, size, alignment, ArenaZero_Force);
 ```
 
-> Convenience macros are provided for common typed and array allocations. Default alignment is an 8-byte boundary. By default, these macros follow the arena’s zeroing policy:
-> - If `ArenaFlags_AlwaysZero` is set on the arena (the default in debug builds), allocations are zeroed.
-> - If it is not set (the default in release builds), allocations are not zeroed unless you explicitly request it via `_zero` variants.
+> Convenience macros are provided for common typed and array allocations. Default alignment is an 8-byte boundary. The `zero` argument is an `ArenaZero`, not a plain bool:
+> - `ArenaZero_FollowPolicy` (the default macros) — zeroed only if `ArenaFlags_AlwaysZero` is set on the arena (the default in debug builds).
+> - `ArenaZero_Force` (the `_zero` variants) — always zeroed, regardless of policy.
+> - `ArenaZero_Never` (the `_nozero` variants) — never zeroed, even if `ArenaFlags_AlwaysZero` is set.
 
 ```c
 /* push one u32 onto the arena */
@@ -131,9 +135,8 @@ u32* one_zeroed   = arena_push_t_zero(&arena, u32);
 f64* array_zeroed = arena_push_array_zero(&arena, f64, 1024);
 ```
 
-No-zero variants skip the explicit zero-fill:
-
 ```c
+/* explicitly skip zeroing for this allocation, even if ArenaFlags_AlwaysZero is set */
 u8* bytes = arena_push_array_nozero(&arena, u8, 256);
 ```
 

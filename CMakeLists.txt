@@ -16,7 +16,7 @@ project(aether
 )
 
 option(AETHER_BUILD_EXAMPLES "Build AETHER examples" OFF)
-option(AETHER_BUILD_TESTS "Build AETHER testsl" OFF)
+option(AETHER_BUILD_TESTS "Build AETHER test" OFF)
 option(AETHER_BUILD_INSTALL "Enable install rules" OFF)
 
 
