@@ -89,7 +89,7 @@ arena.flags =
     ArenaFlags_DebugFillOnClear;  /* when popping/clearing, fill any remaining committed memory with 0xDD */
 ```
 
-***Example: arena_alloc_ex**
+***Example: arena_alloc_ex***
 
 For finer control:
 
@@ -117,10 +117,10 @@ void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero);
 void* memory = arena_push(&arena, size, alignment, ArenaZero_Force);
 ```
 
-> Convenience macros are provided for common typed and array allocations. Default alignment is an 8-byte boundary. The `zero` argument is an `ArenaZero`, not a plain bool:
-> - `ArenaZero_FollowPolicy` (the default macros) — zeroed only if `ArenaFlags_AlwaysZero` is set on the arena (the default in debug builds).
-> - `ArenaZero_Force` (the `_zero` variants) — always zeroed, regardless of policy.
-> - `ArenaZero_Never` (the `_nozero` variants) — never zeroed, even if `ArenaFlags_AlwaysZero` is set.
+ Convenience macros are provided for common typed and array allocations. Default alignment is an 8-byte boundary. The `zero` argument is an `ArenaZero`, not a plain bool:
+ - `ArenaZero_FollowPolicy` (the default macros) — zeroed only if `ArenaFlags_AlwaysZero` is set on the arena (the default in debug builds).
+ - `ArenaZero_Force` (the `_zero` variants) — always zeroed, regardless of policy.
+ - `ArenaZero_Never` (the `_nozero` variants) — never zeroed, even if `ArenaFlags_AlwaysZero` is set.
 
 ```c
 /* push one u32 onto the arena */
