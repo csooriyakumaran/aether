@@ -168,6 +168,9 @@ str8  arena_push_str8_copy(Arena* arena, cstr8 src);
 str8  arena_push_str8_from_cstring(Arena*, const char* src);
 str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...);
 
+// file i/o
+str8  arena_read_file(Arena* arena, const char* path);
+
 /*-------- M E M - M A P P I N G  -------------------------------------------*/
 
 typedef struct FileMapping {
@@ -186,7 +189,12 @@ void  os_file_unmap(FileMapping* mapping);
 
 #endif // AETHER_H_
 
+
+/*-------- H E L P E R S ----------------------------------------------------*/
+f64 os_time_elapsed_sec(u64 start, u64 end);
+
 /*---------------------------------------------------------------------------*/
+#define AETHER_IMPLEMENTATION
 #ifdef AETHER_IMPLEMENTATION
 
 #include <string.h>
@@ -260,6 +268,106 @@ static b8 os_mem_release(void* ptr)
 #else
     #error "AETHER: OS memory release not implemented for this platform"
 #endif
+}
+
+static void* os_file_open(const char* path)
+{
+#ifdef _WIN32
+    HANDLE h = CreateFileA(
+        path,
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+
+    if (h == INVALID_HANDLE_VALUE)
+        return NULL;
+
+    return h;
+#else
+    #error "AETHER: OS file open not implemented for this platform"
+#endif
+}
+
+static void os_file_close(void* handle)
+{
+#ifdef _WIN32
+    CloseHandle(handle);
+#else
+    #error "AETHER: OS file close not implemented for this platform"
+#endif
+}
+
+static b8  os_file_size(void* handle, u64* out_size)
+{
+#ifdef _WIN32
+
+    LARGE_INTEGER filesize;
+    if(!GetFileSizeEx(handle, &filesize))
+        return false;
+
+    *out_size = (u64)filesize.QuadPart;
+    return true;
+#else
+    #error "AETHER: OS file size not implemented for this platform"
+#endif
+}
+
+static b8  os_file_read(void* handle, void* dst, u64 size)
+{
+#ifdef _WIN32
+
+    u8* cursor = (u8*)dst;
+    u64 remaining = size;
+
+    while(remaining >0)
+    {
+        /* Note(Chris):
+         * - capping at MAXWORD (~4 GB) may be exessive
+         * - could reduce in future to 1 GB */
+        DWORD chunk = (remaining  > MAXWORD) ? MAXWORD : (DWORD)remaining;
+        DWORD bytes_read = 0;
+
+        if (!ReadFile(handle, cursor, chunk, &bytes_read, NULL))
+            return false;
+
+        if (bytes_read == 0) /* EOF before reaching reqested size */
+            return false;
+
+        cursor    += bytes_read;
+        remaining -= bytes_read;
+    }
+
+    return true;
+#else
+    #error "AETHER: OS file read not implemented for this platform"
+#endif
+}
+
+static u64 os_time_now(void)
+{
+#ifdef _WIN32
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter(&counter);
+    return (u64)counter.QuadPart;
+#else
+    #error "AETHER: OS time now not implemented for this platform"
+#endif
+}
+
+static u64 os_time_frequency(void)
+{
+#ifdef _WIN32
+    LARGE_INTEGER freq;
+    QueryPerformanceFrequency(&freq);
+    return (u64)freq.QuadPart;
+#else
+    #error "AETHER: OS time frequency not implemented for this platform"
+#endif
+
 }
 
 static u64 align_forward_u64(u64 value, u64 align)
@@ -534,6 +642,33 @@ str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...)
     str8 result = arena_push_str8_fmtv(arena, fmt, args);
     va_end(args);
     return result;
+}
+
+str8  arena_read_file(Arena* arena, const char* path)
+{
+    str8 result = {0};
+    void* h = os_file_open(path);
+    if (!h) return result;
+
+    u64 size = 0;
+    if (!os_file_size(h, &size)) { os_file_close(h); return result; } /* recoverable: missing/inaccessible file */
+
+    u64 mark = arena->pos;
+
+    result.data = arena_push_array_nozero(arena, u8, size);
+    result.size = size;
+
+    b8 ok = os_file_read(h, result.data, size);
+    os_file_close(h);
+
+    if (!ok) { arena_pop_to(arena, mark); return (str8){0}; }
+
+    return result;
+}
+
+f64 os_time_elapsed_sec(u64 start, u64 end)
+{
+    return (f64)(end - start) / (f64)os_time_frequency();
 }
 
 
