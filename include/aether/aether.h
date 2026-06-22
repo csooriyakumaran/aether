@@ -13,6 +13,7 @@
 #define AETHER_H_
 
 #include "aether/aether-version.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -49,7 +50,6 @@ extern "C"
 #endif // AETHER_ENABLE_ASSERTS
 
 #if AETHER_ENABLE_ASSERTS
-    #include <stdio.h>
     #define ASSERT(x) do {                                                                      \
         if (!(x)) {                                                                             \
             fprintf(stderr, "ASSERT FAILED: %s [%s:%d]\n", #x, __FILE__, __LINE__); \
@@ -173,15 +173,13 @@ str8  arena_read_file(Arena* arena, const char* path);
 
 /*-------- M E M - M A P P I N G  -------------------------------------------*/
 
-typedef struct FileMapping {
-    u8*   data;    /* NULL on failure */
-    u64   size;    /* file size in bytes */
-    void* handle;  /* mapping HANDLE on windows; opaque elsewhere */
-} FileMapping;
+str8  map_file(const char* path);
+void  unmap_file(str8 map);
 
-// todo(chris): figure out api
-b8    os_file_map(const char* path, FileMapping* out);
-void  os_file_unmap(FileMapping* mapping);
+/*-------- H E L P E R S ----------------------------------------------------*/
+u64 time_mark(void);
+f64 time_elapsed_sec(u64 start, u64 end);
+
 
 #ifdef __cplusplus
 }
@@ -190,15 +188,10 @@ void  os_file_unmap(FileMapping* mapping);
 #endif // AETHER_H_
 
 
-/*-------- H E L P E R S ----------------------------------------------------*/
-f64 os_time_elapsed_sec(u64 start, u64 end);
-
 /*---------------------------------------------------------------------------*/
-#define AETHER_IMPLEMENTATION
 #ifdef AETHER_IMPLEMENTATION
 
 #include <string.h>
-#include <stdio.h>
 #include <stdarg.h>
 
 #ifdef _WIN32
@@ -270,7 +263,13 @@ static b8 os_mem_release(void* ptr)
 #endif
 }
 
-static void* os_file_open(const char* path)
+/* todo(chris): maybe we need an os_file_open_ex,
+ *              or os_file_open that allows user
+ *              defined read/write mode */
+
+/* ... */
+
+static void* os_file_open_for_read(const char* path)
 {
 #ifdef _WIN32
     HANDLE h = CreateFileA(
@@ -279,7 +278,7 @@ static void* os_file_open(const char* path)
         FILE_SHARE_READ,
         NULL,
         OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
         NULL
     );
 
@@ -288,7 +287,16 @@ static void* os_file_open(const char* path)
 
     return h;
 #else
-    #error "AETHER: OS file open not implemented for this platform"
+    #error "AETHER: OS file open for read not implemented for this platform"
+#endif
+}
+
+static void* os_file_open_for_write(const char* path)
+{
+#ifdef _WIN32
+    return NULL;
+#else
+    #error "AETHER: OS file open for write not implemented for this platform"
 #endif
 }
 
@@ -328,7 +336,7 @@ static b8  os_file_read(void* handle, void* dst, u64 size)
         /* Note(Chris):
          * - capping at MAXWORD (~4 GB) may be exessive
          * - could reduce in future to 1 GB */
-        DWORD chunk = (remaining  > MAXWORD) ? MAXWORD : (DWORD)remaining;
+        DWORD chunk = (remaining  > MAXDWORD) ? MAXDWORD : (DWORD)remaining;
         DWORD bytes_read = 0;
 
         if (!ReadFile(handle, cursor, chunk, &bytes_read, NULL))
@@ -344,6 +352,30 @@ static b8  os_file_read(void* handle, void* dst, u64 size)
     return true;
 #else
     #error "AETHER: OS file read not implemented for this platform"
+#endif
+}
+
+static void* os_file_map(void* handle, u64 size)
+{
+#ifdef _WIN32
+    (void)size;
+    HANDLE hmap = CreateFileMapping(handle, NULL, PAGE_READONLY, 0, 0, NULL);
+    if (!hmap) {return NULL; }
+    void* data = MapViewOfFile(hmap, FILE_MAP_READ, 0, 0, 0);
+    CloseHandle(hmap);
+    return data;
+#else
+    #error "AETHER: Os file map not implemented on this platform"
+#endif
+}
+
+static void os_file_unmap(void* ptr, u64 size)
+{
+#ifdef _WIN32
+    (void)size;
+    UnmapViewOfFile(ptr);
+#else
+    #error "AETHER: Os file unmap not implemented on this platform"
 #endif
 }
 
@@ -647,7 +679,7 @@ str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...)
 str8  arena_read_file(Arena* arena, const char* path)
 {
     str8 result = {0};
-    void* h = os_file_open(path);
+    void* h = os_file_open_for_read(path);
     if (!h) return result;
 
     u64 size = 0;
@@ -666,7 +698,35 @@ str8  arena_read_file(Arena* arena, const char* path)
     return result;
 }
 
-f64 os_time_elapsed_sec(u64 start, u64 end)
+str8  map_file(const char* path)
+{
+    void* h = os_file_open_for_read(path);
+    if (!h) { return (str8){0}; }
+
+    u64 size = 0;
+    if (!os_file_size(h, &size)) { os_file_close(h); return (str8){0}; } /* recoverable: missing/inaccessible file */
+    if (size == 0) { os_file_close(h); return (str8){.data=NULL, .size=0};}
+
+    u8* data = (u8*)os_file_map(h, size);
+    os_file_close(h);
+
+    if(!data) { return (str8){0}; }
+
+    return (str8){.data=data, .size=size};
+
+}
+
+void  unmap_file(str8 buf)
+{
+    os_file_unmap(buf.data, buf.size);
+}
+
+u64 time_mark(void)
+{
+    return os_time_now();
+}
+
+f64 time_elapsed_sec(u64 start, u64 end)
 {
     return (f64)(end - start) / (f64)os_time_frequency();
 }
