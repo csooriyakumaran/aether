@@ -3,16 +3,33 @@
 
   Minimal Core Library for C/C++
 
-  Author      : Christopher Sooriyakumaran
+  Author      : C. Sooriyakumaran
   Created     : 2026-06-18
   License     : MIT
 
+  https://github.com/csooriyakumaran/aether
+
+  DESCROPTIONS
+  ------------
+
   Core types, memory arenas, spans, assertions, and utility primitives.
+
+  Do this:
+      #define AETHER_IMPLEMENTATION
+  before you include this file in *one* C or C++ file to create the implementation.
+
+  // i.e. 
+  #include ...
+  #include ...
+  #include ...
+
+  #define AETHER_IMPLEMENTATION
+  #include "aether/aether.h"
+
 \*---------------------------------------------------------------------------*/
 #ifndef AETHER_H_
 #define AETHER_H_
 
-#include "aether/aether-version.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -86,14 +103,18 @@ typedef uint64_t u64;
 typedef float    f32;
 typedef double   f64;
 
+typedef struct bytes      {       u8* data; u64 size; } bytes;
+typedef struct bytes_view { const u8* data; u64 size; } bytes_view;
+static  inline bytes_view view_from_bytes(bytes b) { return (bytes_view){ .data = b.data, .size = b.size }; }
 /*-------- S T R I N G S -----------------------------------------------------*/
 
-typedef struct str8  {       u8* data; u64 size; } str8;
-typedef struct cstr8 { const u8* data; u64 size; } cstr8;
+typedef bytes      str8;
+typedef bytes_view str8_view;
+static  inline     str8_view view_from_str8(str8 s) { return (str8_view){ .data = s.data, .size = s.size }; }
 
-#define STR(s) ((cstr8){ (const u8*)(s), sizeof(s) - 1 })
-#define STR8_FMT "%.*s"
+#define STR(s) ((str8_view){ (const u8*)(s), sizeof(s) - 1 })
 #define STR8_ARG(s) ((int)((s).size)), ((const char*)((s).data))
+#define STR8_FMT "%.*s"
 
 /*----------------------------------------------------------------------------*/
 
@@ -164,17 +185,21 @@ void  arena_clear(Arena* arena);
 char* arena_push_cstring(Arena* arena, const char* src);
 char* arena_push_cstring_fmt(Arena* arena, const char* fmt, ...);
 
-str8  arena_push_str8_copy(Arena* arena, cstr8 src);
+str8  arena_push_str8_copy(Arena* arena, str8_view src);
 str8  arena_push_str8_from_cstring(Arena*, const char* src);
 str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...);
 
+// convert to null-terminated string
+char* c_str(str8_view s, Arena* arena);
+
 // file i/o
-str8  arena_read_file(Arena* arena, const char* path);
+bytes arena_read_file(Arena* arena, const char* path);
 
 /*-------- M E M - M A P P I N G  -------------------------------------------*/
 
-str8  map_file(const char* path);
-void  unmap_file(str8 map);
+// Read-only view into a memory mapped file
+bytes_view map_file(const char* path);
+void       unmap_file(bytes_view map);
 
 /*-------- H E L P E R S ----------------------------------------------------*/
 u64 time_mark(void);
@@ -369,7 +394,7 @@ static void* os_file_map(void* handle, u64 size)
 #endif
 }
 
-static void os_file_unmap(void* ptr, u64 size)
+static void os_file_unmap(const void* ptr, u64 size)
 {
 #ifdef _WIN32
     (void)size;
@@ -622,7 +647,7 @@ char* arena_push_cstring_fmt(Arena* arena, const char* fmt, ...)
     return result;
 }
 
-str8  arena_push_str8_copy(Arena* arena, cstr8 src)
+str8  arena_push_str8_copy(Arena* arena, str8_view src)
 {
     str8 result;
     result.size = src.size;
@@ -676,9 +701,19 @@ str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...)
     return result;
 }
 
-str8  arena_read_file(Arena* arena, const char* path)
+char* c_str(str8_view s, Arena* arena)
 {
-    str8 result = {0};
+    if (!s.data || !s.size) return "";
+
+    char* out = (char*)arena_push(arena, s.size + 1, 1, ArenaZero_Never);
+    memcpy(out, s.data, s.size);
+    out[s.size] = '\0';
+    return out;
+}
+
+bytes  arena_read_file(Arena* arena, const char* path)
+{
+    bytes result = {0};
     void* h = os_file_open_for_read(path);
     if (!h) return result;
 
@@ -693,30 +728,29 @@ str8  arena_read_file(Arena* arena, const char* path)
     b8 ok = os_file_read(h, result.data, size);
     os_file_close(h);
 
-    if (!ok) { arena_pop_to(arena, mark); return (str8){0}; }
+    if (!ok) { arena_pop_to(arena, mark); return (bytes){0}; }
 
     return result;
 }
 
-str8  map_file(const char* path)
+bytes_view  map_file(const char* path)
 {
     void* h = os_file_open_for_read(path);
-    if (!h) { return (str8){0}; }
+    if (!h) { return (bytes_view){0}; }
 
     u64 size = 0;
-    if (!os_file_size(h, &size)) { os_file_close(h); return (str8){0}; } /* recoverable: missing/inaccessible file */
-    if (size == 0) { os_file_close(h); return (str8){.data=NULL, .size=0};}
+    if (!os_file_size(h, &size)) { os_file_close(h); return (bytes_view){0}; } /* recoverable: missing/inaccessible file */
+    if (size == 0) { os_file_close(h); return (bytes_view){.data=NULL, .size=0};}
 
     u8* data = (u8*)os_file_map(h, size);
     os_file_close(h);
 
-    if(!data) { return (str8){0}; }
+    if(!data) { return (bytes_view){0}; }
 
-    return (str8){.data=data, .size=size};
-
+    return (bytes_view){.data=data, .size=size};
 }
 
-void  unmap_file(str8 buf)
+void  unmap_file(bytes_view buf)
 {
     os_file_unmap(buf.data, buf.size);
 }
@@ -738,16 +772,6 @@ f64 time_elapsed_sec(u64 start, u64 end)
 
 #endif // AETHER_IMPLEMENTATION
 /*---------------------------------------------------------------------------*/
-
-
-/*---------------------------------------------------------------------------*\
-   revision history:
-   ----------------
-
-      v0.0.1 (2026-06-18)
-      - first released version
-
-\*---------------------------------------------------------------------------*/
 
 /*---------------------------------------------------------------------------*\
    LICENSE
