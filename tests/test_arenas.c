@@ -1,13 +1,15 @@
+#define AETHER_NO_ASSERT
 #define AETHER_IMPLEMENTATION
 #include "aether/aether.h"
 
 #include <stdio.h>
 #include <string.h>
 
-/* We don't reuse the library's ASSERT() here: it's a debugger trap in debug
-   builds (kills the run on the first failure) and a no-op in release builds
-   (would let a wrong test pass silently). CHECK() instead records and keeps
-   going, so one run reports every failure. */
+/* AETHER_NO_ASSERT tells aether.h not to claim the ASSERT name, so we define
+   our own here: it records a failure and keeps going instead of trapping on
+   the first one (the library's own ASSERT is a debugger trap in debug builds
+   and a no-op in release, either of which would break a test run). This also
+   doubles as a compile-time check that the AETHER_NO_ASSERT opt-out works. */
 
 static int g_checks   = 0;
 static int g_failures = 0;
@@ -16,7 +18,7 @@ static int section_checks_start     = 0;
 static int section_failures_start  = 0;
 static const char* current_section = NULL;
 
-#define CHECK(cond) do {                                                    \
+#define ASSERT(cond) do {                                                   \
     g_checks++;                                                             \
     if (!(cond)) {                                                          \
         g_failures++;                                                       \
@@ -60,16 +62,16 @@ static void test_alloc_basic(void)
     u64 pagesize = os_mem_pagesize();
     Arena arena = arena_alloc(MB(1));
 
-    CHECK(arena.base != 0);
-    CHECK(arena.pos == 0);
-    CHECK(arena.commit_size == 0);
-    CHECK(arena.reserved_size == page_align_up(MB(1), pagesize));
-    CHECK(arena.granularity == 1);
+    ASSERT(arena.base != 0);
+    ASSERT(arena.pos == 0);
+    ASSERT(arena.commit_size == 0);
+    ASSERT(arena.reserved_size == page_align_up(MB(1), pagesize));
+    ASSERT(arena.granularity == 1);
 
 #if AETHER_ENABLE_ASSERTS
-    CHECK(arena.flags == (ArenaFlags_AlwaysZero | ArenaFlags_DebugFillOnClear | ArenaFlags_Decommit));
+    ASSERT(arena.flags == (ArenaFlags_AlwaysZero | ArenaFlags_DebugFillOnClear | ArenaFlags_Decommit));
 #else
-    CHECK(arena.flags == ArenaFlags_None);
+    ASSERT(arena.flags == ArenaFlags_None);
 #endif
 
     arena_release(&arena);
@@ -82,16 +84,16 @@ static void test_alloc_ex_custom(void)
     u64 pagesize = os_mem_pagesize();
     Arena arena = arena_alloc_ex(MB(1), KB(4), 4, ArenaFlags_CommitChunked);
 
-    CHECK(arena.base != 0);
-    CHECK(arena.reserved_size == page_align_up(MB(1), pagesize));
-    CHECK(arena.commit_size == page_align_up(KB(4), pagesize));
-    CHECK(arena.granularity == 4);
-    CHECK(arena.flags == ArenaFlags_CommitChunked);
-    CHECK(arena.pos == 0);
+    ASSERT(arena.base != 0);
+    ASSERT(arena.reserved_size == page_align_up(MB(1), pagesize));
+    ASSERT(arena.commit_size == page_align_up(KB(4), pagesize));
+    ASSERT(arena.granularity == 4);
+    ASSERT(arena.flags == ArenaFlags_CommitChunked);
+    ASSERT(arena.pos == 0);
 
     /* requesting more initial commit than the reservation clamps, doesn't overflow it */
     Arena clamped = arena_alloc_ex(KB(4), MB(1), 1, ArenaFlags_None);
-    CHECK(clamped.commit_size == clamped.reserved_size);
+    ASSERT(clamped.commit_size == clamped.reserved_size);
 
     arena_release(&arena);
     arena_release(&clamped);
@@ -109,10 +111,10 @@ static void test_push_alignment(void)
     (void)a; (void)b; (void)c; /* just de-align pos before the next push */
 
     u64* d = arena_push_t(&arena, u64);
-    CHECK(((uintptr_t)d % ARENA_ALIGN(u64)) == 0);
+    ASSERT(((uintptr_t)d % ARENA_ALIGN(u64)) == 0);
 
     f64* e = arena_push_array(&arena, f64, 16);
-    CHECK(((uintptr_t)e % ARENA_ALIGN(f64)) == 0);
+    ASSERT(((uintptr_t)e % ARENA_ALIGN(f64)) == 0);
 
     arena_release(&arena);
 }
@@ -129,17 +131,17 @@ static void test_push_array_contiguous(void)
     u32* second = arena_push_array(&arena, u32, 64);
     for (u32 i = 0; i < 64; ++i) second[i] = 1000 + i;
 
-    CHECK((u8*)second == (u8*)(first + 128));
+    ASSERT((u8*)second == (u8*)(first + 128));
 
     b8 first_intact = true;
     for (u32 i = 0; i < 128; ++i)
         if (first[i] != i) { first_intact = false; break; }
-    CHECK(first_intact);
+    ASSERT(first_intact);
 
     b8 second_ok = true;
     for (u32 i = 0; i < 64; ++i)
         if (second[i] != 1000 + i) { second_ok = false; break; }
-    CHECK(second_ok);
+    ASSERT(second_ok);
 
     arena_release(&arena);
 }
@@ -157,11 +159,11 @@ static void test_zero_policy(void)
     arena_pop_to(&arena, mark); /* no Decommit: committed bytes stay resident */
 
     u32* replay = arena_push_array(&arena, u32, 8); /* default push: must NOT zero */
-    CHECK(replay[0] == 0xAAAAAAAAu);
+    ASSERT(replay[0] == 0xAAAAAAAAu);
 
     arena_pop_to(&arena, mark);
     u32* forced_zero = arena_push_array_zero(&arena, u32, 8); /* explicit _zero: always zeroes */
-    CHECK(bytes_all_eq((const u8*)forced_zero, sizeof(u32) * 8, 0));
+    ASSERT(bytes_all_eq((const u8*)forced_zero, sizeof(u32) * 8, 0));
 
     arena_release(&arena);
 
@@ -175,7 +177,7 @@ static void test_zero_policy(void)
     arena_pop_to(&always_zero, mark2);
 
     u32* v2_replay = arena_push_array(&always_zero, u32, 8); /* default push, but policy forces zero */
-    CHECK(bytes_all_eq((const u8*)v2_replay, sizeof(u32) * 8, 0));
+    ASSERT(bytes_all_eq((const u8*)v2_replay, sizeof(u32) * 8, 0));
 
     arena_release(&always_zero);
 }
@@ -193,22 +195,22 @@ static void test_pop_to_and_pop(void)
     u64 mark2 = arena.pos;
 
     arena_pop_to(&arena, mark1);
-    CHECK(arena.pos == mark1);
+    ASSERT(arena.pos == mark1);
 
     arena_pop_to(&arena, mark0);
-    CHECK(arena.pos == mark0);
+    ASSERT(arena.pos == mark0);
 
     /* popping to a position ahead of the current pos is clamped, not honored */
     arena_push_array(&arena, u8, 32);
     u64 before = arena.pos;
     arena_pop_to(&arena, mark2); /* mark2 > current pos */
-    CHECK(arena.pos == before);
+    ASSERT(arena.pos == before);
 
     arena_pop(&arena, 16);
-    CHECK(arena.pos == before - 16);
+    ASSERT(arena.pos == before - 16);
 
     arena_pop(&arena, (u64)-1); /* absurdly large amount clamps at 0, doesn't underflow */
-    CHECK(arena.pos == 0);
+    ASSERT(arena.pos == 0);
 
     arena_release(&arena);
 }
@@ -224,9 +226,9 @@ static void test_clear(void)
 
     arena_clear(&arena);
 
-    CHECK(arena.pos == 0);
-    CHECK(arena.base != 0);
-    CHECK(arena.reserved_size == reserved_before);
+    ASSERT(arena.pos == 0);
+    ASSERT(arena.base != 0);
+    ASSERT(arena.reserved_size == reserved_before);
 
     arena_release(&arena);
 }
@@ -239,14 +241,14 @@ static void test_decommit_flag(void)
     Arena arena = arena_alloc_ex(MB(1), 0, 1, ArenaFlags_Decommit);
 
     arena_push_array(&arena, u8, pagesize * 3);
-    CHECK(arena.commit_size >= pagesize * 3);
+    ASSERT(arena.commit_size >= pagesize * 3);
 
     arena_clear(&arena);
-    CHECK(arena.commit_size == 0);
+    ASSERT(arena.commit_size == 0);
 
     u8* after = arena_push_array(&arena, u8, pagesize);
-    CHECK(after != 0);
-    CHECK(arena.commit_size >= pagesize);
+    ASSERT(after != 0);
+    ASSERT(arena.commit_size >= pagesize);
 
     arena_release(&arena);
 }
@@ -260,13 +262,13 @@ static void test_commit_chunked_flag(void)
     Arena arena = arena_alloc_ex(MB(1), 0, granularity, ArenaFlags_CommitChunked);
 
     arena_push_array(&arena, u8, 8); /* tiny push, still pulls in a whole chunk */
-    CHECK(arena.commit_size == pagesize * granularity);
+    ASSERT(arena.commit_size == pagesize * granularity);
 
     arena_push_array(&arena, u8, pagesize * granularity - 8 - 1); /* fills chunk 1 minus one byte */
-    CHECK(arena.commit_size == pagesize * granularity); /* still inside chunk 1 */
+    ASSERT(arena.commit_size == pagesize * granularity); /* still inside chunk 1 */
 
     arena_push_array(&arena, u8, 2); /* tips over into chunk 2 */
-    CHECK(arena.commit_size == pagesize * granularity * 2);
+    ASSERT(arena.commit_size == pagesize * granularity * 2);
 
     arena_release(&arena);
 }
@@ -283,7 +285,7 @@ static void test_debug_fill_on_clear_flag(void)
     u64 mark = arena.pos - 64;
     arena_pop_to(&arena, mark);
 
-    CHECK(bytes_all_eq(arena.base + mark, 64, 0xDD));
+    ASSERT(bytes_all_eq(arena.base + mark, 64, 0xDD));
 
     arena_release(&arena);
 }
@@ -295,22 +297,22 @@ static void test_strings(void)
     Arena arena = arena_alloc_ex(MB(1), 0, 1, ArenaFlags_None);
 
     char* c = arena_push_cstring(&arena, "hello");
-    CHECK(strcmp(c, "hello") == 0);
+    ASSERT(strcmp(c, "hello") == 0);
 
     char* cf = arena_push_cstring_fmt(&arena, "n=%d", 42);
-    CHECK(strcmp(cf, "n=42") == 0);
+    ASSERT(strcmp(cf, "n=42") == 0);
 
     str8 s = arena_push_str8_copy(&arena, STR("world"));
-    CHECK(s.size == 5);
-    CHECK(memcmp(s.data, "world", 5) == 0);
+    ASSERT(s.size == 5);
+    ASSERT(memcmp(s.data, "world", 5) == 0);
 
     str8 s2 = arena_push_str8_from_cstring(&arena, "abc");
-    CHECK(s2.size == 3);
-    CHECK(s2.data[3] == 0); /* underlying buffer is still null-terminated, even though size excludes it */
+    ASSERT(s2.size == 3);
+    ASSERT(s2.data[3] == 0); /* underlying buffer is still null-terminated, even though size excludes it */
 
     str8 s3 = arena_push_str8_fmt(&arena, "x=%d", 7);
-    CHECK(s3.size == 3);
-    CHECK(memcmp(s3.data, "x=7", 3) == 0);
+    ASSERT(s3.size == 3);
+    ASSERT(memcmp(s3.data, "x=7", 3) == 0);
 
     arena_release(&arena);
 }
@@ -327,17 +329,17 @@ static void test_overflow_guard(void)
 
     u64 pos_before = arena.pos;
     void* p = arena_push(&arena, arena.reserved_size + 1, 1, 0);
-    CHECK(p == 0);
-    CHECK(arena.pos == pos_before);
+    ASSERT(p == 0);
+    ASSERT(arena.pos == pos_before);
 
     /* an allocation that exactly fills the remaining reservation still succeeds */
     void* exact = arena_push(&arena, arena.reserved_size, 1, 0);
-    CHECK(exact != 0);
-    CHECK(arena.pos == arena.reserved_size);
+    ASSERT(exact != 0);
+    ASSERT(arena.pos == arena.reserved_size);
 
     /* and now even one more byte is rejected */
     void* one_more = arena_push(&arena, 1, 1, 0);
-    CHECK(one_more == 0);
+    ASSERT(one_more == 0);
 
     arena_release(&arena);
 #endif
@@ -352,10 +354,10 @@ static void test_release(void)
 
     arena_release(&arena);
 
-    CHECK(arena.base == 0);
-    CHECK(arena.reserved_size == 0);
-    CHECK(arena.commit_size == 0);
-    CHECK(arena.pos == 0);
+    ASSERT(arena.base == 0);
+    ASSERT(arena.reserved_size == 0);
+    ASSERT(arena.commit_size == 0);
+    ASSERT(arena.pos == 0);
 }
 
 static void test_many_small_pushes(void)
@@ -377,16 +379,16 @@ static void test_many_small_pushes(void)
             if (spot_idx[s] == i) slots[s] = slot;
     }
 
-    CHECK(arena.pos == (u64)n * sizeof(u32));
+    ASSERT(arena.pos == (u64)n * sizeof(u32));
 
     b8 spots_ok = true;
     for (int s = 0; s < 8; ++s)
         if (*slots[s] != spot_idx[s]) { spots_ok = false; break; }
-    CHECK(spots_ok);
+    ASSERT(spots_ok);
 
     arena_clear(&arena);
-    CHECK(arena.pos == 0);
-    CHECK(arena.commit_size == 0); /* Decommit flag: clear walks committed pages back down */
+    ASSERT(arena.pos == 0);
+    ASSERT(arena.commit_size == 0); /* Decommit flag: clear walks committed pages back down */
 
     arena_release(&arena);
 }

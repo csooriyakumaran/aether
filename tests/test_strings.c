@@ -1,10 +1,11 @@
+#define AETHER_NO_ASSERT
 #define AETHER_IMPLEMENTATION
 #include "aether/aether.h"
 
 #include <stdio.h>
 #include <string.h>
 
-/* See test_arenas.c for why we don't reuse the library's ASSERT() here. */
+/* See test_arenas.c for why we define our own ASSERT() via AETHER_NO_ASSERT. */
 
 static int g_checks   = 0;
 static int g_failures = 0;
@@ -13,7 +14,7 @@ static int section_checks_start    = 0;
 static int section_failures_start  = 0;
 static const char* current_section = NULL;
 
-#define CHECK(cond) do {                                                    \
+#define ASSERT(cond) do {                                                   \
     g_checks++;                                                             \
     if (!(cond)) {                                                          \
         g_failures++;                                                       \
@@ -41,24 +42,24 @@ static void test_eq(void)
 {
     SECTION("str8_eq: byte-wise equality");
 
-    CHECK(str8_eq(STR("hello"), STR("hello")));
-    CHECK(!str8_eq(STR("hello"), STR("world")));
-    CHECK(!str8_eq(STR("hello"), STR("hell")));  /* shared prefix, different length */
-    CHECK(str8_eq(STR(""), STR("")));
+    ASSERT(str8_eq(STR("hello"), STR("hello")));
+    ASSERT(!str8_eq(STR("hello"), STR("world")));
+    ASSERT(!str8_eq(STR("hello"), STR("hell")));  /* shared prefix, different length */
+    ASSERT(str8_eq(STR(""), STR("")));
 
     str8_view s = STR("same");
-    CHECK(str8_eq(s, s)); /* pointer-identity shortcut */
+    ASSERT(str8_eq(s, s)); /* pointer-identity shortcut */
 }
 
 static void test_cmp(void)
 {
     SECTION("str8_cmp: three-way ordering");
 
-    CHECK(str8_cmp(STR("abc"), STR("abc")) == 0);
-    CHECK(str8_cmp(STR("abc"), STR("abd")) < 0);
-    CHECK(str8_cmp(STR("abd"), STR("abc")) > 0);
-    CHECK(str8_cmp(STR("ab"),  STR("abc")) < 0);  /* strict prefix sorts first */
-    CHECK(str8_cmp(STR("abc"), STR("ab"))  > 0);
+    ASSERT(str8_cmp(STR("abc"), STR("abc")) == 0);
+    ASSERT(str8_cmp(STR("abc"), STR("abd")) < 0);
+    ASSERT(str8_cmp(STR("abd"), STR("abc")) > 0);
+    ASSERT(str8_cmp(STR("ab"),  STR("abc")) < 0);  /* strict prefix sorts first */
+    ASSERT(str8_cmp(STR("abc"), STR("ab"))  > 0);
 }
 
 static void test_slice(void)
@@ -68,15 +69,15 @@ static void test_slice(void)
     str8_view s = STR("hello world");
 
     str8_view whole = str8_slice(s, 0, s.size);
-    CHECK(whole.size == s.size);
-    CHECK(memcmp(whole.data, "hello world", 11) == 0);
+    ASSERT(whole.size == s.size);
+    ASSERT(memcmp(whole.data, "hello world", 11) == 0);
 
     str8_view word = str8_slice(s, 6, 11);
-    CHECK(word.size == 5);
-    CHECK(memcmp(word.data, "world", 5) == 0);
+    ASSERT(word.size == 5);
+    ASSERT(memcmp(word.data, "world", 5) == 0);
 
     str8_view empty = str8_slice(s, 3, 3);
-    CHECK(empty.size == 0);
+    ASSERT(empty.size == 0);
 }
 
 /* str8_trim intentionally has no test case yet: its current implementation
