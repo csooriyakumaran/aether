@@ -8,9 +8,12 @@ It provides a minimal set of common primitives:
 
 - fixed-width type aliases
 - assertions and utility macros
-- string views
 - bit flags
-- memory arenas
+- string views and operations (slice, trim, compare, arena-backed copy/format)
+- memory arenas (linear allocator with scratch / temporary support)
+- file I/O (read a file into an arena)
+- memory-mapped files
+- timing helpers
 
 The intent is not to be a framework, but rather a lightweight foundation that can be included in other libraries or applications. The motivation is to share primitives between different aerodynamic solver codes.
 
@@ -170,7 +173,7 @@ arena_pop_to(&arena, mark);
 
 ## Use Case: Temporary File Processing
 
-A common pattern is to use a scratch arena for temporary data that only needs to live for the duration of a task.
+A common pattern is to use a scratch arena for temporary data that only needs to live for the duration of a task. `arena_read_file` reads an entire file into the arena in one call and returns a `bytes` view (`{ u8* data; u64 size; }`).
 
 > `arena_alloc(MB(64))` reserves 64 MB of virtual address space. Initial commit, zeroing, and decommit behavior follow the build-configuration defaults described above.
 
@@ -178,48 +181,60 @@ A common pattern is to use a scratch arena for temporary data that only needs to
 Arena scratch = arena_alloc(MB(64));
 
 /*--------------------------------------------------------*/
-/* Other allocations/deallocations on scratch */
+/* Other allocations/deallocations on scratch             */
 /*--------------------------------------------------------*/
 
-u64 mark = scratch.pos;
+ArenaTemp tmp = arena_begin_temp(&scratch);
 
-FILE* fp = fopen("input.dat", "rb");
-ASSERT(fp);
-
-fseek(fp, 0, SEEK_END);
-u64 file_size = (u64)ftell(fp);
-fseek(fp, 0, SEEK_SET);
-
-u8* file_data = arena_push_array(&scratch, u8, file_size);
-
-u64 bytes_read = fread(file_data, 1, file_size, fp);
-ASSERT(bytes_read == file_size);
-
-fclose(fp);
+/* Read the whole file into the arena. On a missing or
+   unreadable file the result is {0} and the arena is left
+   untouched, so the caller can recover. */
+bytes file = arena_read_file(&scratch, "input.dat");
 
 /*--------------------------------------------------------*/
 /* Process file contents                                  */
 /*--------------------------------------------------------*/
 
-process_file(file_data, file_size);
+if (file.data)
+{
+    process_file(file.data, file.size);
+}
+else
+{
+    /* nothing was pushed onto the arena, so there is nothing
+       to unwind here — report and carry on */
+    fprintf(stderr, "could not read input.dat\n");
+}
 
 /*--------------------------------------------------------*/
 /* Discard all temporary allocations at once              */
 /*--------------------------------------------------------*/
 
-arena_pop_to(&scratch, mark);
-/* or if other temporaries are no longer needed... */
-arena_clear(&scratch);
+arena_end_temp(tmp);   /* file bytes reclaimed with everything else */
 
 /*--------------------------------------------------------*/
-/* continue to re-use scratch arena for other temp work */
+/* continue to re-use scratch arena for other temp work   */
 /*--------------------------------------------------------*/
 
 arena_release(&scratch);
-
 ```
 
-No individual deallocation is required. Once processing is complete, the entire working set is discarded with a single call to `arena_pop_to` or `arena_clear`.
+No individual deallocation is required. The file bytes live in the arena, so once processing is complete the entire working set is discarded together by ending the `ArenaTemp` (or with `arena_pop_to` / `arena_clear`).
+
+### Read-only files: `map_file`
+
+When a file is large and read-only, `map_file` maps it directly into the address space instead of copying it into an arena. It returns a `bytes_view` (`const u8*`) whose pages are backed by the OS and faulted in on demand.
+
+```c
+bytes_view file = map_file("big.dat");   /* OS-backed pages, not arena memory */
+if (file.data)
+{
+    process_file_ro(file.data, file.size);
+    unmap_file(file);                    /* independent of any arena lifetime */
+}
+```
+
+A mapped view is **not** owned by any arena: `arena_pop_to` / `arena_clear` do not release it, and it must be returned explicitly with `unmap_file`. Use `arena_read_file` when you need mutable bytes or want the data to share the arena's lifetime; use `map_file` for large read-only inputs you want to page in lazily.
 
 ## Use Case: Nested Scratch Arenas in a Numerical Kernel
 
@@ -280,9 +295,9 @@ void string_example(void)
     /* Basic arena-backed strings                   */
     /*----------------------------------------------*/
 
-    /* Literal to cstr8 then copy into the arena */
-    cstr8 src  = STR("hello, world");
-    str8  s    = arena_push_str8_copy(&arena, src);
+    /* Literal to str8_view then copy into the arena */
+    str8_view src = STR("hello, world");
+    str8      s   = arena_push_str8_copy(&arena, src);
 
     /* Print using STR8_FMT / STR8_ARG */
     printf("s = " STR8_FMT "\n", STR8_ARG(s));
