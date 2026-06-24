@@ -26,6 +26,12 @@
   #define AETHER_IMPLEMENTATION
   #include "aether/aether.h"
 
+  OPTIONAL OPT-OUT DEFINES
+  ------------------------
+
+  - AETHER_NO_MINMAX:   skips defining MIN/MAX if not already defined
+  - AETHER_NO_ASSERT:   skips defining ASSERT if not already defined
+
 \*---------------------------------------------------------------------------*/
 #ifndef AETHER_H_
 #define AETHER_H_
@@ -66,15 +72,21 @@ extern "C"
 #endif // AETHER_ENABLE_ASSERTS
 
 #if AETHER_ENABLE_ASSERTS
-    #define ASSERT(x) do {                                                                      \
+    #define AETHER_ASSERT_(x) do {                                                                      \
         if (!(x)) {                                                                             \
             fprintf(stderr, "ASSERT FAILED: %s [%s:%d]\n", #x, __FILE__, __LINE__); \
             DEBUG_BREAK();                                                                      \
         }                                                                                       \
     } while (0)
 #else
-    #define ASSERT(x) ((void)0)
+    #define AETHER_ASSERT_(x) ((void)0)
 #endif // AETHER_ENABLE_ASSERTS
+
+#ifndef AETHER_NO_ASSERT
+    #ifndef ASSERT
+    #define ASSERT(x) AETHER_ASSERT_(x)
+    #endif // ASSERT
+#endif // AETHER_NO_ASSERT
 
 #define FATAL(msg) do {  \
     fprintf(stderr, "FATAL ERROR: %s [%s:%d]\n", msg, __FILE__, __LINE__); \
@@ -83,8 +95,17 @@ extern "C"
 
 #define ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define AETHER_MIN_(a, b) ((a) < (b) ? (a) : (b))
+#define AETHER_MAX_(a, b) ((a) > (b) ? (a) : (b))
+
+#ifndef AETHER_NO_MINMAX
+    #ifndef MIN
+    #define MIN(a, b) AETHER_MIN_(a, b)
+    #endif // MIN
+    #ifndef MAX
+    #define MAX(a, b) AETHER_MAX_(a, b)
+    #endif // MAX
+#endif // AETHER_NO_MINMAX
 
 /*-------- T Y P E S ---------------------------------------------------------*/
 
@@ -428,8 +449,8 @@ static u64 os_time_frequency(void)
 
 static u64 align_forward_u64(u64 value, u64 align)
 {
-    ASSERT(align != 0);
-    ASSERT((align & (align - 1)) == 0);
+    AETHER_ASSERT_(align != 0);
+    AETHER_ASSERT_((align & (align - 1)) == 0);
 
     u64 mask = align - 1;
     return (value + mask) & ~mask;
@@ -452,7 +473,7 @@ static void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
         new_commit_size = align_forward_u64(new_pos, pagesize);
     }
 
-    new_commit_size = MIN(new_commit_size, arena->reserved_size);
+    new_commit_size = AETHER_MIN_(new_commit_size, arena->reserved_size);
         
     b8 committed = os_mem_commit(arena->base + arena->commit_size, new_commit_size - arena->commit_size);
     if(!committed) FATAL("Memory commit faild");
@@ -488,7 +509,7 @@ static void arena_decommit_tail(Arena* arena, u64 new_pos)
 
 Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags)
 {
-    ASSERT(reserve_size > 0);
+    AETHER_ASSERT_(reserve_size > 0);
 
     Arena arena = {0};
 
@@ -553,20 +574,20 @@ void arena_release(Arena* arena)
 
 void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
 {
-    ASSERT(arena->pos <= arena->reserved_size);
+    AETHER_ASSERT_(arena->pos <= arena->reserved_size);
 
     u64 aligned_pos = align_forward_u64(arena->pos, align);
-    ASSERT(aligned_pos <= arena->reserved_size);
+    AETHER_ASSERT_(aligned_pos <= arena->reserved_size);
 
     // catch u64 overflow
     if (size > arena->reserved_size - aligned_pos)
     {
-        ASSERT(!"arena_push overflow: allocation exceeds reserved size");
+        AETHER_ASSERT_(!"arena_push overflow: allocation exceeds reserved size");
         return NULL;
     }
 
     u64 new_pos = aligned_pos + size;
-    ASSERT(new_pos <= arena->reserved_size);
+    AETHER_ASSERT_(new_pos <= arena->reserved_size);
 
     if (new_pos > arena->commit_size)
         arena_commit_page_or_chunk(arena, new_pos);
@@ -627,12 +648,12 @@ static inline char* arena_push_cstring_fmtv(Arena* arena, const char* fmt, va_li
     int len = vsnprintf(NULL, 0, fmt, args_copy);
     va_end(args_copy);
 
-    ASSERT (len >= 0);
+    AETHER_ASSERT_(len >= 0);
 
     /* use 1-byte alignement to maximum packing */
     char* buffer = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
     int written = vsnprintf(buffer, (size_t)len + 1, fmt, args);
-    ASSERT(written == len);
+    AETHER_ASSERT_(written == len);
 
     return buffer;
 }
@@ -677,12 +698,12 @@ static inline str8  arena_push_str8_fmtv(Arena* arena, const char* fmt, va_list 
 
     va_end(args_copy);
 
-    ASSERT(len >= 0);
+    AETHER_ASSERT_(len >= 0);
 
     char* buffer = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
 
     int written = vsnprintf(buffer, (size_t)len + 1, fmt, args);
-    ASSERT(written == len);
+    AETHER_ASSERT_(written == len);
 
     str8 result;
     result.data = (u8*)buffer;
