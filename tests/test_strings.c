@@ -80,16 +80,35 @@ static void test_slice(void)
     ASSERT(empty.size == 0);
 }
 
-/* str8_trim intentionally has no test case yet: its current implementation
-   walks backwards with an unsigned loop counter and no lower bound, so it
-   reads out of bounds and crashes on essentially any input. Add a case once
-   that loop is fixed -- see review notes. */
+static void test_trim(void)
+{
+    SECTION("str8_trim: strips leading/trailing whitespace only");
+
+    str8_view a = str8_trim(STR("  hello  "));
+    ASSERT(a.size == 5);
+    ASSERT(memcmp(a.data, "hello", 5) == 0);
+
+    str8_view b = str8_trim(STR("no_trim"));
+    ASSERT(b.size == 7);
+    ASSERT(memcmp(b.data, "no_trim", 7) == 0);
+
+    str8_view c = str8_trim(STR("   "));
+    ASSERT(c.size == 0);
+
+    str8_view d = str8_trim(STR(""));
+    ASSERT(d.size == 0);
+
+    str8_view e = str8_trim(STR("a b\tc\n")); /* embedded whitespace must survive */
+    ASSERT(e.size == 5);
+    ASSERT(memcmp(e.data, "a b\tc", 5) == 0);
+}
 
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"eq",    test_eq},
     {"cmp",   test_cmp},
     {"slice", test_slice},
+    {"trim",  test_trim},
 };
 
 int main(int argc, char** argv)
