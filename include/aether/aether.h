@@ -209,8 +209,14 @@ str8  arena_push_str8_copy(Arena* arena, str8_view src);
 str8  arena_push_str8_from_cstring(Arena*, const char* src);
 str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...);
 
+/*-------- S T R I N G - O P E R A T I O N S --------------------------------*/
 // convert to null-terminated string
-char* c_str(str8_view s, Arena* arena);
+char*     c_str(str8_view s, Arena* arena);
+
+b8        str8_eq(str8_view a, str8_view b);
+i32       str8_cmp(str8_view a, str8_view b); /* memcmp-style ordering */
+str8_view str8_slice(str8_view s, u64 start, u64 end);
+str8_view str8_trim(str8_view s);
 
 // file i/o
 bytes arena_read_file(Arena* arena, const char* path);
@@ -783,6 +789,39 @@ u64 time_mark(void)
 f64 time_elapsed_sec(u64 start, u64 end)
 {
     return (f64)(end - start) / (f64)os_time_frequency();
+}
+
+b8 str8_eq(str8_view a, str8_view b)
+{
+    if (a.size != b.size) return false;
+    if (a.data == b.data) return true;
+    return memcmp(a.data, b.data, a.size) == 0;
+}
+
+i32 str8_cmp(str8_view a, str8_view b)
+{
+    u64 n = AETHER_MIN_(a.size, b.size);
+    i32 r = memcmp(a.data, b.data, n);
+    if (r != 0) return r;
+    if (a.size != b.size) return (a.size < b.size) ? -1 : 1;
+    return 0;
+}
+
+str8_view str8_slice(str8_view s, u64 start, u64 end)
+{
+    AETHER_ASSERT_(start <= end && end <= s.size);
+    return (str8_view){ .data = s.data + start, .size = end - start };
+}
+
+static b8 char_is_ws(u8 c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+
+str8_view str8_trim(str8_view s)
+{
+    u64 start = 0;
+    while (start < s.size && char_is_ws(s.data[start])) start++;
+    u64 end   = s.size;
+    while (end > start && char_is_ws(s.data[end-1])) end--;
+    return (str8_view){ .data = s.data + start, .size = end - start };
 }
 
 
