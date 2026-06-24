@@ -287,6 +287,50 @@ static void test_temp_out_of_order_is_safe(void)
 #endif
 }
 
+static void test_temp_rk4_pattern(void)
+{
+    SECTION("temp: RK-stage pattern -- outer buffers survive repeated inner begin/end cycles");
+
+    Arena scratch = arena_alloc_ex(MB(1), 0, 1, ArenaFlags_None);
+    u64 base = scratch.pos;
+    u64 n    = 8;
+
+    ArenaTemp step = arena_begin_temp(&scratch); /* outer: lives for the whole "step" */
+
+    f64* stages[5]; /* stand-ins for k1..k4 plus a tmp state buffer */
+    for (u32 s = 0; s < 5; ++s)
+    {
+        stages[s] = arena_push_array(&scratch, f64, n);
+        for (u64 i = 0; i < n; ++i) stages[s][i] = (f64)(s * 1000 + i); /* sentinel */
+    }
+
+    void* first_flux = NULL;
+    for (u32 stage = 0; stage < 4; ++stage) /* 4 "RHS evaluations" per step */
+    {
+        ArenaTemp rhs = arena_begin_temp(&scratch); /* inner: this call only */
+
+        f64* flux = arena_push_array(&scratch, f64, n + 1);
+        for (u64 i = 0; i < n + 1; ++i) flux[i] = (f64)i;
+
+        if (stage == 0) first_flux = flux;
+        else            ASSERT(flux == first_flux); /* same bytes reused every call */
+
+        arena_end_temp(rhs);
+    }
+
+    /* none of the inner begin/end cycles disturbed the outer, stage-persistent buffers */
+    b8 outer_intact = true;
+    for (u32 s = 0; s < 5; ++s)
+        for (u64 i = 0; i < n; ++i)
+            if (stages[s][i] != (f64)(s * 1000 + i)) { outer_intact = false; break; }
+    ASSERT(outer_intact);
+
+    arena_end_temp(step);
+    ASSERT(scratch.pos == base);
+
+    arena_release(&scratch);
+}
+
 static void test_clear(void)
 {
     SECTION("clear: resets position, preserves reservation");
@@ -476,6 +520,7 @@ static TestCase g_cases[] = {
     {"temp_basic",               test_temp_basic},
     {"temp_nested",              test_temp_nested},
     {"temp_out_of_order_is_safe", test_temp_out_of_order_is_safe},
+    {"temp_rk4_pattern",          test_temp_rk4_pattern},
     {"clear",                    test_clear},
     {"decommit_flag",            test_decommit_flag},
     {"commit_chunked_flag",      test_commit_chunked_flag},
