@@ -31,7 +31,6 @@
 #define AETHER_H_
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -79,7 +78,7 @@ extern "C"
 
 #define FATAL(msg) do {  \
     fprintf(stderr, "FATAL ERROR: %s [%s:%d]\n", msg, __FILE__, __LINE__); \
-    DEBUG_BREAK(); abort(); \
+    DEBUG_BREAK(); \
 } while(0)
 
 #define ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
