@@ -29,8 +29,9 @@
   OPTIONAL OPT-OUT DEFINES
   ------------------------
 
-  - AETHER_NO_MINMAX:   skips defining MIN/MAX if not already defined
-  - AETHER_NO_ASSERT:   skips defining ASSERT if not already defined
+  - AETHER_NO_MINMAX:       skips defining MIN/MAX if not already defined
+  - AETHER_NO_ASSERT:       skips defining ASSERT if not already defined
+  - AETHER_NO_ARRAY_COUNT:  skips defining ARRAY_COUNT if not already defined
 
 \*---------------------------------------------------------------------------*/
 #ifndef AETHER_H_
@@ -93,7 +94,14 @@ extern "C"
     DEBUG_BREAK(); \
 } while(0)
 
-#define ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
+/* ARRAYS ONLY: decays silently on pointers */
+#define AETHER_ARRAY_COUNT_(a) (sizeof(a) / sizeof((a)[0]))
+
+#ifndef AETHER_NO_ARRAY_COUNT
+    #ifndef ARRAY_COUNT
+    #define ARRAY_COUNT(a) AETHER_ARRAY_COUNT_(a)
+    #endif // ARRAY_COUNT
+#endif // AETHER_NO_ARRAY_COUNT_
 
 #define AETHER_MIN_(a, b) ((a) < (b) ? (a) : (b))
 #define AETHER_MAX_(a, b) ((a) > (b) ? (a) : (b))
@@ -227,6 +235,8 @@ b8        str8_eq(str8_view a, str8_view b);
 i32       str8_cmp(str8_view a, str8_view b); /* memcmp-style ordering */
 str8_view str8_slice(str8_view s, u64 start, u64 end);
 str8_view str8_trim(str8_view s);
+
+// todo(chris): additional string operations (find, split, )
 
 // file i/o
 bytes arena_read_file(Arena* arena, const char* path);
