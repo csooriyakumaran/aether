@@ -215,6 +215,78 @@ static void test_pop_to_and_pop(void)
     arena_release(&arena);
 }
 
+static void test_temp_basic(void)
+{
+    SECTION("temp: begin/end restores pos and the space is reusable");
+
+    Arena arena = arena_alloc_ex(MB(1), 0, 1, ArenaFlags_None);
+
+    ArenaTemp temp = arena_begin_temp(&arena);
+    u32* scratch = arena_push_array(&arena, u32, 64);
+    for (u32 i = 0; i < 64; ++i) scratch[i] = 0xAAAAAAAAu;
+    ASSERT(arena.pos != temp.pos);
+
+    arena_end_temp(temp);
+    ASSERT(arena.pos == temp.pos);
+
+    u32* reused = arena_push_array(&arena, u32, 64); /* same bytes as scratch */
+    ASSERT(reused == scratch);
+    ASSERT(reused[0] == 0xAAAAAAAAu); /* default push: must NOT zero leftover content */
+
+    arena_release(&arena);
+}
+
+static void test_temp_nested(void)
+{
+    SECTION("temp: nested begin/end pairs unwind in LIFO order");
+
+    Arena arena = arena_alloc_ex(MB(1), 0, 1, ArenaFlags_None);
+    u64 base = arena.pos;
+
+    ArenaTemp outer = arena_begin_temp(&arena);
+    arena_push_array(&arena, u8, 64);
+    u64 after_outer_push = arena.pos;
+
+    ArenaTemp inner = arena_begin_temp(&arena);
+    arena_push_array(&arena, u8, 32);
+    ASSERT(arena.pos == after_outer_push + 32);
+
+    arena_end_temp(inner);
+    ASSERT(arena.pos == after_outer_push);
+
+    arena_end_temp(outer);
+    ASSERT(arena.pos == base);
+
+    arena_release(&arena);
+}
+
+static void test_temp_out_of_order_is_safe(void)
+{
+    SECTION("temp: ending an outer temp first leaves a stale inner temp harmless");
+
+#if AETHER_ENABLE_ASSERTS
+    printf("   skipped: ASSERT() traps on the stale-temp check in this build (AETHER_ENABLE_ASSERTS=1);\n"
+           "            rebuild with NDEBUG defined to exercise the release-mode failure path.\n");
+#else
+    Arena arena = arena_alloc_ex(MB(1), 0, 1, ArenaFlags_None);
+    u64 base = arena.pos;
+
+    ArenaTemp outer = arena_begin_temp(&arena);
+    arena_push_array(&arena, u8, 64);
+
+    ArenaTemp inner = arena_begin_temp(&arena);
+    arena_push_array(&arena, u8, 32);
+
+    arena_end_temp(outer); /* ends first; pos rolls back past inner's mark */
+    ASSERT(arena.pos == base);
+
+    arena_end_temp(inner); /* stale: inner.pos > arena.pos now -- must clamp, not grow */
+    ASSERT(arena.pos == base);
+
+    arena_release(&arena);
+#endif
+}
+
 static void test_clear(void)
 {
     SECTION("clear: resets position, preserves reservation");
@@ -401,6 +473,9 @@ static TestCase g_cases[] = {
     {"push_array_contiguous",    test_push_array_contiguous},
     {"zero_policy",              test_zero_policy},
     {"pop_to_and_pop",           test_pop_to_and_pop},
+    {"temp_basic",               test_temp_basic},
+    {"temp_nested",              test_temp_nested},
+    {"temp_out_of_order_is_safe", test_temp_out_of_order_is_safe},
     {"clear",                    test_clear},
     {"decommit_flag",            test_decommit_flag},
     {"commit_chunked_flag",      test_commit_chunked_flag},
