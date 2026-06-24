@@ -13,7 +13,7 @@ target_link_libraries(test_arena
 #     COMMAND test_arena
 # )
 
-set(ARENA_TEST_CASES alloc_basic alloc_ex_custom push_alignment push_array_contiguous
+set(ARENA_TEST_CASES array_count alloc_basic alloc_ex_custom push_alignment push_array_contiguous
     zero_policy pop_to_and_pop temp_basic temp_nested temp_out_of_order_is_safe
     temp_rk4_pattern clear decommit_flag commit_chunked_flag debug_fill_on_clear_flag
     strings overflow_guard release many_small_pushes)

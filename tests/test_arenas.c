@@ -55,6 +55,36 @@ static u64 page_align_up(u64 value, u64 pagesize)
     return ((value + pagesize - 1) / pagesize) * pagesize;
 }
 
+static void test_array_count(void)
+{
+    SECTION("ARRAY_COUNT: element count for fixed-size arrays");
+
+    int   ints[5]    = {0};
+    f64   doubles[3] = {0};
+    u8    raw[7]     = {0};
+    Arena arenas[2]  = {0}; /* array of structs */
+    char  one[1]     = {0};
+
+    ASSERT(ARRAY_COUNT(ints)    == 5);
+    ASSERT(ARRAY_COUNT(doubles) == 3);
+    ASSERT(ARRAY_COUNT(raw)     == 7);
+    ASSERT(ARRAY_COUNT(arenas)  == 2);
+    ASSERT(ARRAY_COUNT(one)     == 1);
+
+    /* count is independent of element size */
+    ASSERT(sizeof(doubles) == ARRAY_COUNT(doubles) * sizeof(doubles[0]));
+
+    /* ARRAY_COUNT is a compile-time integer constant expression: if it weren't,
+       neither the _Static_assert nor the array bound below would compile. */
+    _Static_assert(ARRAY_COUNT(ints) == 5, "ARRAY_COUNT must be a constant expression");
+
+    int as_bound[ARRAY_COUNT(ints)]; /* not a VLA -- sized at compile time */
+    ASSERT(sizeof(as_bound) == sizeof(ints));
+
+    /* the private name resolves identically (uniform with MIN_/ASSERT_) */
+    ASSERT(AETHER_ARRAY_COUNT_(ints) == ARRAY_COUNT(ints));
+}
+
 static void test_alloc_basic(void)
 {
     SECTION("alloc: basic reserve/commit/pos state");
@@ -511,6 +541,7 @@ static void test_many_small_pushes(void)
 
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
+    {"array_count",              test_array_count},
     {"alloc_basic",              test_alloc_basic},
     {"alloc_ex_custom",          test_alloc_ex_custom},
     {"push_alignment",           test_push_alignment},
