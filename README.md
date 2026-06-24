@@ -221,6 +221,50 @@ arena_release(&scratch);
 
 No individual deallocation is required. Once processing is complete, the entire working set is discarded with a single call to `arena_pop_to` or `arena_clear`.
 
+## Use Case: Nested Scratch Arenas in a Numerical Kernel
+
+`ArenaTemp` (`arena_begin_temp` / `arena_end_temp`) names the mark/pop_to pattern above, and nests cleanly: an outer computation can hold its own scratch buffers while calling inner steps that need their own short-lived ones — e.g. an RK4 time step, where the four stage-derivative buffers must outlive each individual flux evaluation.
+
+```c
+static void eval_rhs(const f64* state, f64* out_rhs, u64 n, f64 dx, Arena* scratch)
+{
+    ArenaTemp temp = arena_begin_temp(scratch);   /* inner: this call only */
+
+    f64* flux = arena_push_array(scratch, f64, n + 1);
+    compute_flux(state, flux, n);
+
+    for (u64 i = 0; i < n; ++i)
+        out_rhs[i] = -(flux[i + 1] - flux[i]) / dx;
+
+    arena_end_temp(temp);                         /* flux buffer reclaimed */
+}
+
+void rk4_step(f64* y, u64 n, f64 dt, f64 dx, Arena* scratch)
+{
+    ArenaTemp step = arena_begin_temp(scratch);   /* outer: whole step */
+
+    f64* k1  = arena_push_array(scratch, f64, n);
+    f64* k2  = arena_push_array(scratch, f64, n);
+    f64* k3  = arena_push_array(scratch, f64, n);
+    f64* k4  = arena_push_array(scratch, f64, n);
+    f64* tmp = arena_push_array(scratch, f64, n);
+
+    eval_rhs(y, k1, n, dx, scratch);
+    for (u64 i = 0; i < n; ++i) tmp[i] = y[i] + 0.5*dt*k1[i];
+    eval_rhs(tmp, k2, n, dx, scratch);
+    for (u64 i = 0; i < n; ++i) tmp[i] = y[i] + 0.5*dt*k2[i];
+    eval_rhs(tmp, k3, n, dx, scratch);
+    for (u64 i = 0; i < n; ++i) tmp[i] = y[i] + dt*k3[i];
+    eval_rhs(tmp, k4, n, dx, scratch);
+
+    for (u64 i = 0; i < n; ++i)
+        y[i] += (dt/6.0) * (k1[i] + 2*k2[i] + 2*k3[i] + k4[i]);
+
+    arena_end_temp(step);                         /* k1..k4, tmp all reclaimed together */
+}
+```
+
+Each call to `eval_rhs` reuses the same bytes for `flux`, four times per step, without ever disturbing `k1`..`k4` — the outer `ArenaTemp` only unwinds once, after the full step. Allocate `scratch` once outside the time-stepping loop; no allocator calls happen inside it.
 
 ## Use Case: String allocations
 
