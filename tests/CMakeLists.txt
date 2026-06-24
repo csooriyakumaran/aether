@@ -20,3 +20,18 @@ set(ARENA_TEST_CASES alloc_basic alloc_ex_custom push_alignment push_array_conti
 foreach(case ${ARENA_TEST_CASES})
     add_test(NAME arena_${case} COMMAND test_arena ${case})
 endforeach()
+
+add_executable(test_strings
+    test_strings.c
+)
+
+target_link_libraries(test_strings
+    PRIVATE
+        aether::aether
+)
+
+set(STRING_TEST_CASES eq cmp slice)
+
+foreach(case ${STRING_TEST_CASES})
+    add_test(NAME str8_${case} COMMAND test_strings ${case})
+endforeach()
