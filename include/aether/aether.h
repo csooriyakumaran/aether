@@ -126,6 +126,7 @@ typedef double   f64;
 typedef struct bytes      {       u8* data; u64 size; } bytes;
 typedef struct bytes_view { const u8* data; u64 size; } bytes_view;
 static  inline bytes_view view_from_bytes(bytes b) { return (bytes_view){ .data = b.data, .size = b.size }; }
+
 /*-------- S T R I N G S -----------------------------------------------------*/
 
 typedef bytes      str8;
@@ -178,6 +179,11 @@ typedef struct Arena {
     ArenaFlags flags;
 } Arena;
 
+typedef struct ArenaTemp {
+    Arena* arena;
+    u64 pos;
+} ArenaTemp;
+
 Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags);
 Arena arena_alloc(u64 reserve_size);
 void  arena_release(Arena* arena);
@@ -208,6 +214,10 @@ char* arena_push_cstring_fmt(Arena* arena, const char* fmt, ...);
 str8  arena_push_str8_copy(Arena* arena, str8_view src);
 str8  arena_push_str8_from_cstring(Arena*, const char* src);
 str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...);
+
+// temporary arenas
+ArenaTemp arena_begin_temp(Arena* arena);
+void      arena_end_temp(ArenaTemp temp);
 
 /*-------- S T R I N G - O P E R A T I O N S --------------------------------*/
 // convert to null-terminated string
@@ -725,6 +735,17 @@ str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...)
     str8 result = arena_push_str8_fmtv(arena, fmt, args);
     va_end(args);
     return result;
+}
+
+ArenaTemp arena_begin_temp(Arena* arena)
+{
+    return (ArenaTemp){ .arena = arena, .pos = arena->pos };
+}
+
+void arena_end_temp(ArenaTemp temp)
+{
+    AETHER_ASSERT_(temp.pos <= temp.arena->pos);
+    arena_pop_to(temp.arena, temp.pos);
 }
 
 char* c_str(str8_view s, Arena* arena)
