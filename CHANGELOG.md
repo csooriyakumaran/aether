@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.5] - 2026-06-23
+
+### Added
+- `bytes` / `bytes_view`: new base byte-span types (mutable / read-only) underlying `str8`/`str8_view`, with `view_from_bytes`/`view_from_str8` helpers to convert a mutable span to its read-only view.
+- `c_str`: convert a `str8_view` to a null-terminated, arena-allocated C string.
+
+### Changed
+- **Breaking:** `cstr8` is removed; `str8` and the new `str8_view` are now aliases for `bytes`/`bytes_view`. `STR(...)` now produces a `str8_view` instead of a `cstr8`.
+- **Breaking:** `arena_read_file` now returns `bytes` instead of `str8`.
+- **Breaking:** `map_file` now returns `bytes_view` instead of `str8`, and `unmap_file` takes a `bytes_view` — reflecting that a memory-mapped file is a read-only, non-owning view.
+- `os_file_unmap` takes `const void*` instead of `void*`.
+- `aether/aether-version.h` is no longer included automatically by `aether.h`; consumers that need version macros must include the generated header themselves.
+
 ## [0.0.4] - 2026-06-22
 
 ### Added
