@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.6] - 2026-06-24
+
+### Added
+- `str8_eq` / `str8_cmp` / `str8_slice` / `str8_trim`: string-view operations — equality, three-way ordering, half-open `[start, end)` slicing, and leading/trailing whitespace trim. All operate on `str8_view` and allocate nothing.
+- `ArenaTemp` with `arena_begin_temp` / `arena_end_temp`: scoped checkpoint/restore over an existing arena, nests LIFO. Names the manual `mark = arena.pos; ... arena_pop_to(...)` pattern; ending out of order clamps safely rather than corrupting `pos`.
+- `AETHER_NO_ASSERT` / `AETHER_NO_MINMAX` / `AETHER_NO_ARRAY_COUNT`: opt-out defines so a consumer can suppress aether's `ASSERT`/`MIN`/`MAX`/`ARRAY_COUNT` and supply their own. The public macros also now defer to any pre-existing definition via `#ifndef` guards.
+
+### Changed
+- `FATAL` no longer calls `abort()` — it relies on `DEBUG_BREAK()` alone, dropping the `<stdlib.h>` dependency. (`__builtin_trap()` already never returns on GCC/Clang; `__debugbreak()` + the default unhandled-exception path terminates on MSVC.)
+- Internal macros now resolve through private `AETHER_*_` names (`AETHER_ASSERT_`, `AETHER_MIN_`, `AETHER_MAX_`, `AETHER_ARRAY_COUNT_`) so the library's own code never depends on a consumer-overridable public name.
+
 ## [0.0.5] - 2026-06-23
 
 ### Added
