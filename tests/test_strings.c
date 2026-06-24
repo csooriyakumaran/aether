@@ -103,12 +103,73 @@ static void test_trim(void)
     ASSERT(memcmp(e.data, "a b\tc", 5) == 0);
 }
 
+static void test_str_macro(void)
+{
+    SECTION("STR / STR8_ARG / STR8_FMT: literal-to-view and printf round trip");
+
+    str8_view s = STR("hello");
+    ASSERT(s.size == 5);
+    ASSERT(memcmp(s.data, "hello", 5) == 0);
+
+    str8_view empty = STR("");
+    ASSERT(empty.size == 0);
+
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), STR8_FMT, STR8_ARG(s));
+    ASSERT(n == 5);
+    ASSERT(strcmp(buf, "hello") == 0);
+}
+
+static void test_views(void)
+{
+    SECTION("view_from_str8 / view_from_bytes: borrow without copying");
+
+    Arena arena = arena_alloc(KB(4));
+
+    str8 owned = arena_push_str8_copy(&arena, STR("borrowed"));
+    str8_view view = view_from_str8(owned);
+    ASSERT(view.data == owned.data);
+    ASSERT(view.size == owned.size);
+
+    bytes b = { .data = owned.data, .size = owned.size };
+    bytes_view bv = view_from_bytes(b);
+    ASSERT(bv.data == b.data);
+    ASSERT(bv.size == b.size);
+
+    arena_release(&arena);
+}
+
+static void test_c_str(void)
+{
+    SECTION("c_str: str8_view -> null-terminated, arena-allocated C string");
+
+    Arena arena = arena_alloc(KB(4));
+
+    char* h = c_str(STR("hello"), &arena);
+    ASSERT(strcmp(h, "hello") == 0);
+
+    str8 copy = arena_push_str8_copy(&arena, STR("world"));
+    char* w = c_str(view_from_str8(copy), &arena);
+    ASSERT(strcmp(w, "world") == 0);
+
+    char* e = c_str(STR(""), &arena);
+    ASSERT(strcmp(e, "") == 0);
+
+    char* z = c_str((str8_view){0}, &arena); /* NULL data, zero size */
+    ASSERT(strcmp(z, "") == 0);
+
+    arena_release(&arena);
+}
+
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"eq",    test_eq},
     {"cmp",   test_cmp},
-    {"slice", test_slice},
-    {"trim",  test_trim},
+    {"slice",     test_slice},
+    {"trim",      test_trim},
+    {"str_macro", test_str_macro},
+    {"views",     test_views},
+    {"c_str",     test_c_str},
 };
 
 int main(int argc, char** argv)
