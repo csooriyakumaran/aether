@@ -36,3 +36,18 @@ set(STRING_TEST_CASES eq cmp slice trim str_macro views c_str)
 foreach(case ${STRING_TEST_CASES})
     add_test(NAME str8_${case} COMMAND test_strings ${case})
 endforeach()
+
+add_executable(test_ring
+    test_ring.c
+)
+
+target_link_libraries(test_ring
+    PRIVATE
+        aether::aether
+)
+
+set(RING_TEST_CASES mirror alloc roundtrip seam peek_no_consume guards stream counter_wrap)
+
+foreach(case ${RING_TEST_CASES})
+    add_test(NAME ring_${case} COMMAND test_ring ${case})
+endforeach()
