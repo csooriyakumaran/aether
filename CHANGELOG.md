@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `RingBuffer` with `ring_buffer_alloc` / `ring_buffer_write` / `ring_buffer_peek` / `ring_buffer_read` / `ring_buffer_release`: fixed-capacity single-producer/single-consumer byte ring buffer using a virtually-mirrored ("magic") mapping — the same physical pages are mapped twice back-to-back, so any span up to capacity wraps as a single `memcpy` and `ring_buffer_peek` returns a contiguous view even when the data straddles the seam. Capacity rounds up to a power of two ≥ the OS allocation granularity (64 KiB on Windows); `read`/`write` are monotonic counters masked on access, which keeps full/empty unambiguous and stays correct across 64-bit overflow. Covered in `tests/test_ring.c`.
+- Windows 10 1803+ only: the backing `VirtualAlloc2` / `MapViewOfFile3` / `UnmapViewOfFile2` are resolved at runtime via `GetProcAddress` from `kernelbase.dll`, so there is no extra link dependency and the binary still loads on older Windows — `ring_buffer_alloc` simply returns `false`. The `MEM_*_PLACEHOLDER` constants are `#ifndef`-supplied so the header compiles against older SDKs.
+
 ## [0.0.6] - 2026-06-24
 
 ### Added
