@@ -6,7 +6,7 @@
   - [.] str8 operations — equality/comparison, slicing, trim done (`str8_eq`/`str8_cmp`/`str8_slice`/`str8_trim`, tested in `tests/test_strings.c`); find/split still open. find: out-param + `b8` return (matches `os_file_size`'s convention) vs. an `npos`-style sentinel. split: non-allocating iterator (`str8_split_next` over a cursor) vs. an allocating `arena_push_str8_split` returning an array of views — leaning iterator-first since it composes better with a parsing loop and the allocating version can always be built on top later.
   - [ ] POSIX backend for the OS layer — `os_mem_reserve/commit/decommit/release/pagesize` are Windows-only by design for now. The arena logic itself doesn't change, just those five shim functions, whenever CFD/HPC work lands you on  Linux.
   - [x] add `os_file_map` / `os_file_unmap` using `CreateFileMapping`/`MapViewOfFile` for direct mem-mapping of OS files. (for WIN32 for now)
-  - [ ] ring / circular buffers
+  - [x] ring / circular buffers — virtually-mirrored ("magic") ring buffer on Win10 1803+. `VirtualAlloc2`/`MapViewOfFile3`/`UnmapViewOfFile2` are resolved at runtime via `GetProcAddress` from `kernelbase.dll`, so there is no extra link dependency and the binary still loads on older Windows (alloc just returns `false`). Tested across mirror/seam/stream/counter-wrap in `tests/test_ring.c`.
   - [ ] add `os_file_open_for_write` and `os_file_open_ex` (for fine control)
 
 ### Quality of life (easier to use, same capability)
@@ -20,3 +20,7 @@
   - [x] Test coverage for the str8 macros (`STR`/`STR8_ARG`/`STR8_FMT`) and string manipulation (`str8_eq`/`cmp`/`slice`/`trim`, `c_str`, `view_from_str8`/`view_from_bytes`) — covered in `tests/test_strings.c`. (`cstr8` no longer exists; replaced by `str8_view` in v0.0.5.)
   - [ ] Test coverage for `BIT()`/`BIT8/16/32/64()` — the one remaining untested macro group; everything else now has coverage across `tests/test_arenas.c` and `tests/test_strings.c`.
   - [ ] Keep an eye on `ArenaFlags` width (`u8`, room for 4 more flags) — already a known todo in the header; don't let flag #5 become an afterthought.
+  - [x] ~~add guards against windows version for ring buffers (`_WIN32` && `NTDDI_VERSION >= NTDDI_WIN10_RS4`)~~ — handled at *runtime* instead: the `GetProcAddress` probe returns `false` on pre-1803 Windows (more precise than a version number, and degrades gracefully). The `MEM_*_PLACEHOLDER` constants are `#ifndef`-supplied so the header still compiles against an older SDK. A hard compile-time `NTDDI` opt-out (to drop the feature entirely on old *targets*) remains optional and unneeded for now.
+  - [ ] POSIX backend for ring buffers — same two-views-of-one-mapping trick via `memfd_create` + double `mmap` (or `shm_open`/`ftruncate`), to land alongside the arena's pending POSIX shims.
+  - [ ] `ring_buffer_read`/`write` should guard `NULL rb` for parity with `ring_buffer_peek` (they currently check only `rb->base`).
+  - [ ] consider an opt-in overwrite-oldest write mode — `ring_buffer_write` currently rejects when full; a lossy/overwrite policy is handy for telemetry-style streams that prefer freshest data over backpressure.
