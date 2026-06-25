@@ -227,7 +227,22 @@ str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...);
 ArenaTemp arena_begin_temp(Arena* arena);
 void      arena_end_temp(ArenaTemp temp);
 
-/*-------- S T R I N G - O P E R A T I O N S --------------------------------*/
+/* -------- R I N G / C I R C U L A R - B U F F E R S ---------------------- */
+typedef struct RingBuffer
+{
+    u8* base;
+    u64 size;
+    u64 read;
+    u64 write;
+} RingBuffer;
+
+b8 ring_buffer_alloc(RingBuffer* rb, u64 size);
+void ring_buffer_release(RingBuffer* rb);
+b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len);
+b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len);
+bytes_view ring_buffer_peek(RingBuffer* rb, u64 len);
+
+/* -------- S T R I N G - O P E R A T I O N S ------------------------------ */
 // convert to null-terminated string
 char*     c_str(str8_view s, Arena* arena);
 
@@ -241,13 +256,13 @@ str8_view str8_trim(str8_view s);
 // file i/o
 bytes arena_read_file(Arena* arena, const char* path);
 
-/*-------- M E M - M A P P I N G  -------------------------------------------*/
+/* ------- M E M - M A P P I N G  ------------------------------------------ */
 
 // Read-only view into a memory mapped file
 bytes_view map_file(const char* path);
 void       unmap_file(bytes_view map);
 
-/*-------- H E L P E R S ----------------------------------------------------*/
+/* ------- H E L P E R S --------------------------------------------------- */
 u64 time_mark(void);
 f64 time_elapsed_sec(u64 start, u64 end);
 
@@ -276,6 +291,23 @@ f64 time_elapsed_sec(u64 start, u64 end);
 
     #include <windows.h>
 
+    /* define functions required for ring buffers to avoid compile-time link requirement */
+    typedef PVOID (WINAPI *VirtualAlloc2_fn)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, void*, ULONG);
+    typedef PVOID (WINAPI *MapViewOfFile3_fn)(HANDLE, HANDLE, PVOID, ULONG64, SIZE_T, ULONG, ULONG, void*, ULONG);
+    typedef BOOL  (WINAPI *UnmapViewOfFile2_fn)(HANDLE, PVOID, ULONG);
+
+    #ifndef MEM_RESERVE_PLACEHOLDER
+    #define MEM_RESERVE_PLACEHOLDER 0x00040000
+    #endif // MEM_RESERVE_PLACEHOLDER
+
+    #ifndef MEM_REPLACE_PLACEHOLDER
+    #define MEM_REPLACE_PLACEHOLDER 0x00004000
+    #endif // MEM_REPLACE_PLACEHOLDER
+
+    #ifndef MEM_PRESERVE_PLACEHOLDER
+    #define MEM_PRESERVE_PLACEHOLDER 0x00000002
+    #endif // MEM_PRESERVE_PLACEHOLDER
+
 #endif // _WIN32
 
 #ifdef __cplusplus
@@ -293,6 +325,18 @@ static u64 os_mem_pagesize(void)
         return pagesize;
 #else
         #error "AETHER: OS memory page size not implemented for this platform"
+#endif
+}
+
+static u64 os_mem_pagegranularity(void)
+{
+#ifdef _WIN32
+        SYSTEM_INFO sysinfo = {0};
+        GetSystemInfo(&sysinfo);
+        u64 page_granularity = (u64)sysinfo.dwAllocationGranularity; 
+        return page_granularity;
+#else
+        #error "AETHER: OS memory page granularity not implemented for this platform"
 #endif
 
 }
@@ -325,9 +369,10 @@ static b8 os_mem_decommit(void* ptr, u64 size)
 #endif
 }
 
-static b8 os_mem_release(void* ptr)
+static b8 os_mem_release(void* ptr, u64 size)
 {
 #ifdef _WIN32
+    (void)size;
     return VirtualFree(ptr, 0, MEM_RELEASE);
 #else
     #error "AETHER: OS memory release not implemented for this platform"
@@ -440,6 +485,67 @@ static void* os_file_map(void* handle, u64 size)
 #endif
 }
 
+static void* os_mem_reserve_ring(u64 size)
+{
+#ifdef _WIN32
+    VirtualAlloc2_fn va2 = (VirtualAlloc2_fn)GetProcAddress(GetModuleHandleW(L"kernelbase.dll"), "VirtualAlloc2");
+    if (!va2) return NULL;
+    return va2(NULL, NULL, 2*size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, NULL, 0);
+#else
+    #error "AETHER: OS memory ring allocation ngs not implemented for this platform"
+#endif
+
+}
+
+static b8 os_mem_split_ring(void* ptr, u64 size)
+{
+#ifdef _WIN32
+    return VirtualFree(ptr, size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) != 0;
+#else
+    #error "AETHER: OS memory ring splitting not implemented for this platform"
+#endif
+
+}
+
+static void* os_mem_map_ring(void* ptr, u64 size)
+{
+#ifdef _WIN32
+    MapViewOfFile3_fn mvf3 = (MapViewOfFile3_fn)GetProcAddress(GetModuleHandleW(L"kernelbase.dll"), "MapViewOfFile3");
+    if (!mvf3) return NULL;
+
+    DWORD  hi   = (DWORD)(size >> 32);
+    DWORD  lo   = (DWORD)(size & 0xFFFFFFFF);
+    HANDLE hmap = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, hi, lo, NULL);
+    if (!hmap) return NULL;
+
+    PVOID base   = mvf3(hmap, NULL, (u8*)ptr,        0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, NULL, 0);
+    PVOID mirror = mvf3(hmap, NULL, (u8*)ptr + size, 0, size, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, NULL, 0);
+    CloseHandle(hmap);
+
+    if (!base || !mirror) return NULL;
+    return (void*)base;
+#else
+    #error "AETHER: Os file map not implemented on this platform"
+#endif
+}
+
+static b8 os_mem_release_ring(void* ptr, u64 size)
+{
+#ifdef _WIN32
+    UnmapViewOfFile2_fn umvf2 = (UnmapViewOfFile2_fn)GetProcAddress(GetModuleHandleW(L"kernelbase.dll"), "UnmapViewOfFile2");
+    if (!umvf2) return false;
+
+    umvf2(GetCurrentProcess(), ptr,           MEM_PRESERVE_PLACEHOLDER);
+    umvf2(GetCurrentProcess(), (u8*)ptr+size, MEM_PRESERVE_PLACEHOLDER);
+
+    BOOL base_freed   = VirtualFree(     ptr,        0, MEM_RELEASE);
+    BOOL mirror_freed = VirtualFree((u8*)ptr + size, 0, MEM_RELEASE);
+    return base_freed && mirror_freed;
+#else
+    #error "AETHER: OS memory release not implemented for this platform"
+#endif
+}
+
 static void os_file_unmap(const void* ptr, u64 size)
 {
 #ifdef _WIN32
@@ -471,6 +577,19 @@ static u64 os_time_frequency(void)
     #error "AETHER: OS time frequency not implemented for this platform"
 #endif
 
+}
+
+static u64 round_up_power_2(u64 n)
+{
+    if (n == 0) return 1;
+    n--;
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    n |= n >> 32;
+    return n + 1;
 }
 
 static u64 align_forward_u64(u64 value, u64 align)
@@ -589,7 +708,7 @@ Arena arena_alloc(u64 reserve_size)
 void arena_release(Arena* arena)
 {
     if (arena->base)
-        os_mem_release(arena->base);
+        os_mem_release(arena->base, arena->reserved_size);
 
     arena->base          = 0;
     arena->reserved_size = 0;
@@ -757,6 +876,95 @@ void arena_end_temp(ArenaTemp temp)
     AETHER_ASSERT_(temp.pos <= temp.arena->pos);
     arena_pop_to(temp.arena, temp.pos);
 }
+
+b8 ring_buffer_alloc(RingBuffer* rb, u64 size)
+{
+    if (!rb) return false;
+    rb->read  = 0;
+    rb->write = 0;
+
+    u64 size_pow2 = round_up_power_2(size);
+    u64 page_granularity = os_mem_pagegranularity(); /* should already be power of 2 */
+
+    u64 ring_size = AETHER_MAX_(size_pow2, page_granularity);
+
+    rb->base = os_mem_reserve_ring(ring_size);
+    if (!rb->base) return false;
+
+    rb->size = ring_size;
+    if(!os_mem_split_ring(rb->base, rb->size))
+    {
+        os_mem_release(rb->base, rb->size);
+        return false;
+    }
+
+    u8* base = os_mem_map_ring(rb->base, rb->size);
+    if (!base || rb->base != base)
+    {
+        os_mem_release_ring(rb->base, rb->size);
+        // handle error or panic?
+        return false;
+
+    }
+
+    return true;
+}
+
+void ring_buffer_release(RingBuffer* rb)
+{
+    if (!rb || !rb->base) return;
+    os_mem_release_ring(rb->base, rb->size);
+    rb->base  = NULL;
+    rb->size  = 0;
+    rb->read  = 0;
+    rb->write = 0;
+}
+
+b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len)
+{
+    if (!rb || !rb->base) return false;
+    u64 available = rb->write - rb->read;
+
+    if (len <= available)
+    {
+        u64 read_idx  = rb->read & (rb->size - 1);
+        memcpy(dst, rb->base + read_idx, len);
+        rb->read += len;
+        return true;
+    }
+
+    return false;
+}
+b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len)
+{
+    if (!rb || !rb->base) return false;
+    if (len > rb->size ) return false;
+    /* reject if it will overright un-read data */
+    if (len > rb->size - (rb->write - rb->read)) return false;
+
+    u64 write_idx = rb->write & (rb->size - 1);
+    memcpy(rb->base + write_idx, src, len);
+    rb->write += len;
+    return true;
+}
+
+
+bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
+{
+    if (!rb || !rb->base) return (bytes_view){0};
+
+    u64 available = rb->write - rb->read;
+
+    if (len <= available)
+    {
+        u64 read_idx = rb->read & (rb->size - 1);
+        return (bytes_view){.data = rb->base + read_idx, .size = len};
+    }
+
+    return (bytes_view){0};
+
+}
+
 
 char* c_str(str8_view s, Arena* arena)
 {
