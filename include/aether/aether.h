@@ -238,9 +238,12 @@ typedef struct RingBuffer
 
 b8 ring_buffer_alloc(RingBuffer* rb, u64 size);
 void ring_buffer_release(RingBuffer* rb);
-b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len);
-b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len);
+u64 ring_buffer_available(RingBuffer* rb);
+b8  ring_buffer_read(RingBuffer* rb, void* dst, u64 len);
+b8  ring_buffer_write(RingBuffer* rb, const void* src, u64 len);
 bytes_view ring_buffer_peek(RingBuffer* rb, u64 len);
+b8  ring_buffer_advance_read(RingBuffer* rb, u64 len);
+
 
 /* -------- S T R I N G - O P E R A T I O N S ------------------------------ */
 // convert to null-terminated string
@@ -909,6 +912,12 @@ b8 ring_buffer_alloc(RingBuffer* rb, u64 size)
     return true;
 }
 
+u64 ring_buffer_available(RingBuffer* rb)
+{
+    if (!rb || !rb->base) return 0;
+    return rb->write - rb->read;
+}
+
 void ring_buffer_release(RingBuffer* rb)
 {
     if (!rb || !rb->base) return;
@@ -921,19 +930,16 @@ void ring_buffer_release(RingBuffer* rb)
 
 b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len)
 {
-    if (!rb || !rb->base) return false;
-    u64 available = rb->write - rb->read;
 
-    if (len <= available)
-    {
-        u64 read_idx  = rb->read & (rb->size - 1);
-        memcpy(dst, rb->base + read_idx, len);
-        rb->read += len;
-        return true;
-    }
+    bytes_view view = ring_buffer_peek(rb, len);
+    if (!view.size) return false;
 
-    return false;
+    memcpy(dst, view.data, view.size);
+    ring_buffer_advance_read(rb, view.size);
+
+    return true;
 }
+
 b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len)
 {
     if (!rb || !rb->base) return false;
@@ -947,6 +953,13 @@ b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len)
     return true;
 }
 
+b8  ring_buffer_advance_read(RingBuffer* rb, u64 len)
+{
+    if (!rb || !rb->base) return false;
+    if (len > rb->write - rb->read) return false;
+    rb->read += len;
+    return true;
+}
 
 bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
 {
