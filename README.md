@@ -374,13 +374,13 @@ if (!ring_buffer_alloc(&rb, KB(64)))   /* rounded up to a power of two >= 64 KiB
 /* producer: write the whole span or nothing.
    returns false if there isn't room — apply backpressure or drop */
 u8 frame[1024];
-if (!ring_buffer_write(&rb, frame, sizeof frame))
+if (!ring_buffer_write(&rb, frame, sizeof(frame))
 {
     /* buffer full */
 }
 
 /* consumer: inspect before committing to a read */
-bytes_view head = ring_buffer_peek(&rb, sizeof frame);
+bytes_view head = ring_buffer_peek(&rb, sizeof(frame));
 if (head.size)
 {
     /* head.data is ONE contiguous span even when the logical data wraps
