@@ -357,11 +357,13 @@ The requested capacity is rounded up to a power of two that is at least the OS a
 
 | FUNCTION              | DESCRIPTION                                                                                  |
 | --------------------- | -------------------------------------------------------------------------------------------- |
-| `ring_buffer_alloc`   | Reserve + map the mirrored region. Returns `false` on failure (incl. pre-1803 Windows).      |
-| `ring_buffer_write`   | Copy `len` bytes in. Rejects (returns `false`) if `len` exceeds free space or total capacity. |
-| `ring_buffer_peek`    | Return a contiguous `bytes_view` of `len` bytes **without** consuming. `{0}` if `len` unavailable. |
-| `ring_buffer_read`    | Copy `len` bytes out and advance the read cursor. Returns `false` if `len` unavailable.       |
-| `ring_buffer_release` | Unmap both views, free the reservation, and zero the struct.                                 |
+| `ring_buffer_alloc`        | Reserve + map the mirrored region. Returns `false` on failure (incl. pre-1803 Windows).      |
+| `ring_buffer_available`    | Bytes currently ready to read (`write - read`).                                              |
+| `ring_buffer_write`        | Copy `len` bytes in. Rejects (returns `false`) if `len` exceeds free space or total capacity. |
+| `ring_buffer_peek`         | Return a contiguous `bytes_view` of `len` bytes **without** consuming. `{0}` if `len` unavailable. |
+| `ring_buffer_read`         | Copy `len` bytes out and advance the read cursor. Returns `false` if `len` unavailable.       |
+| `ring_buffer_advance_read` | Advance the read cursor by `len` **without** copying (zero-copy consume). `false` if `len` exceeds available. |
+| `ring_buffer_release`      | Unmap both views, free the reservation, and zero the struct.                                 |
 
 ```c
 RingBuffer rb = {0};
@@ -374,7 +376,7 @@ if (!ring_buffer_alloc(&rb, KB(64)))   /* rounded up to a power of two >= 64 KiB
 /* producer: write the whole span or nothing.
    returns false if there isn't room — apply backpressure or drop */
 u8 frame[1024];
-if (!ring_buffer_write(&rb, frame, sizeof(frame))
+if (!ring_buffer_write(&rb, frame, sizeof(frame)))
 {
     /* buffer full */
 }
@@ -393,6 +395,26 @@ if (head.size)
 
 ring_buffer_release(&rb);                      /* unmap + zero the struct */
 ```
+
+### Zero-copy consume: `peek` → `advance_read`
+
+For a sink that can read straight from the buffer — e.g. a socket `send()` — skip the copy entirely: `peek` a contiguous span, hand its pointer to the consumer, then advance the read cursor by however much was actually consumed.
+
+```c
+/* point the socket straight at the buffer; no intermediate copy */
+bytes_view v = ring_buffer_peek(&rb, ring_buffer_available(&rb));
+if (v.size)
+{
+    i64 n = send(sock, (const char*)v.data, (int)v.size, 0);  /* may accept < v.size */
+    if (n > 0)
+        ring_buffer_advance_read(&rb, (u64)n);                /* advance by what was sent */
+}
+```
+
+Two things make this safe and convenient:
+
+- **One `send()` covers wrapped data.** `peek` returns a *single contiguous* span even when the logical bytes straddle the seam (the mirror), so there is never any need for scatter/gather (`iovec`) to handle the wrap.
+- **The span stays valid for the whole call.** The producer can never write past the read cursor, and you do not advance `read` until *after* `send()` returns — so the producer cannot overwrite the in-flight bytes. Advancing by the returned count (not by what you peeked) also handles partial sends correctly.
 
 > [!NOTE]
 > The buffer is **not** thread-safe on its own. It is sized for a single producer and single consumer; concurrent access needs external synchronization (or the lock-free SPSC discipline of one writer touching `write` and one reader touching `read`).
