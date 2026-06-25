@@ -13,6 +13,7 @@ It provides a minimal set of common primitives:
 - memory arenas (linear allocator with scratch / temporary support)
 - file I/O (read a file into an arena)
 - memory-mapped files
+- ring / circular buffers (virtually-mirrored — reads and writes that wrap the end stay a single contiguous copy)
 - timing helpers
 
 The intent is not to be a framework, but rather a lightweight foundation that can be included in other libraries or applications. The motivation is to share primitives between different aerodynamic solver codes.
@@ -329,3 +330,69 @@ void string_example(void)
     arena_release(&arena); /* release the reserved region back to the OS */
 }
 ```
+
+## Ring Buffers
+
+AETHER provides a fixed-capacity **ring (circular) buffer** for byte streams — a single-producer / single-consumer FIFO useful for pipes, logging, and telemetry.
+
+It uses the *virtually-mirrored* (a.k.a. "magic") layout: the buffer reserves twice its capacity of address space and maps the **same physical pages** into both halves. A read or write that crosses the end of the buffer therefore wraps automatically, so any span up to the full capacity is always a **single `memcpy`** and `ring_buffer_peek` can hand back **one contiguous view even when the data straddles the seam** — no split-at-the-boundary bookkeeping.
+
+> [!NOTE]
+> Ring buffers are currently Windows-only and require Windows 10 version 1803 or newer (`VirtualAlloc2` / `MapViewOfFile3`). These are resolved at runtime, so there is **no extra link dependency** — on an older OS `ring_buffer_alloc` simply returns `false`. Always check its return value.
+
+The requested capacity is rounded up to a power of two that is at least the OS allocation granularity (64 KiB on Windows). This keeps index wrapping a cheap mask and satisfies the placeholder-mapping alignment rules.
+
+### Layout
+
+| FIELD | DESCRIPTION                                                      |
+| ----- | ---------------------------------------------------------------- |
+| base  | Base of the lower mapped view (the mirror lives at `base + size`) |
+| size  | Capacity in bytes (power of two ≥ allocation granularity)        |
+| read  | Monotonically increasing read cursor (masked by `size` on access) |
+| write | Monotonically increasing write cursor (masked by `size` on access) |
+
+`read` and `write` are ever-increasing counters; bytes available to read is simply `write - read`, and free space is `size - (write - read)`. They are masked to an index only at the moment of access, which keeps "full" and "empty" unambiguous and stays correct across 64-bit overflow.
+
+### API
+
+| FUNCTION              | DESCRIPTION                                                                                  |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `ring_buffer_alloc`   | Reserve + map the mirrored region. Returns `false` on failure (incl. pre-1803 Windows).      |
+| `ring_buffer_write`   | Copy `len` bytes in. Rejects (returns `false`) if `len` exceeds free space or total capacity. |
+| `ring_buffer_peek`    | Return a contiguous `bytes_view` of `len` bytes **without** consuming. `{0}` if `len` unavailable. |
+| `ring_buffer_read`    | Copy `len` bytes out and advance the read cursor. Returns `false` if `len` unavailable.       |
+| `ring_buffer_release` | Unmap both views, free the reservation, and zero the struct.                                 |
+
+```c
+RingBuffer rb = {0};
+if (!ring_buffer_alloc(&rb, KB(64)))   /* rounded up to a power of two >= 64 KiB */
+{
+    /* unavailable (e.g. Windows < 1803) — fall back or bail */
+    return;
+}
+
+/* producer: write the whole span or nothing.
+   returns false if there isn't room — apply backpressure or drop */
+u8 frame[1024];
+if (!ring_buffer_write(&rb, frame, sizeof frame))
+{
+    /* buffer full */
+}
+
+/* consumer: inspect before committing to a read */
+bytes_view head = ring_buffer_peek(&rb, sizeof frame);
+if (head.size)
+{
+    /* head.data is ONE contiguous span even when the logical data wraps
+       the end of the buffer — the mirror makes the seam invisible */
+    parse(head.data, head.size);
+
+    u8 sink[1024];
+    ring_buffer_read(&rb, sink, head.size);   /* now advance the read cursor */
+}
+
+ring_buffer_release(&rb);                      /* unmap + zero the struct */
+```
+
+> [!NOTE]
+> The buffer is **not** thread-safe on its own. It is sized for a single producer and single consumer; concurrent access needs external synchronization (or the lock-free SPSC discipline of one writer touching `write` and one reader touching `read`).
