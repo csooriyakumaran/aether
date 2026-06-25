@@ -24,12 +24,64 @@ static void print_binary_u8(u8 value)
 static void print_binary_u64(u64 value)
 {
     printf("0b");
-    for (i32 i = 63; i >= 0; --i)
+   for (i32 i = 63; i >= 0; --i)
     {
         // if ((i+1) % 4 == 0) printf(" ");
         printf("%c", (value & (1ull << i)) ? '1' : '0');
     }
 }
+
+static void print_pad(u64 n) { for (u64 i = 0; i < n; ++i) putchar(' '); }
+static void print_ring_buffer(RingBuffer* rb)
+{
+    const u64 pad   = 2;
+    const u64 count = 16;
+    const u64 cellw = 5; /* "0x00 " */
+    const u64 lead  = 6; /* "[ ... " */
+    const u64 seamw = 2; /* "| " */
+
+    u64 mask = rb->size - 1;
+    u64 lo   = rb->read - pad;
+
+    u64 seam_cell  = (rb->size - (lo & mask)) & mask;
+    b8  seam_shown = seam_cell < count;
+
+    u64 r_cell = pad;
+    u64 w_cell = rb->write - lo;
+    b8  w_vis  = (w_cell < count);
+
+    #define COL_OF(c) (lead + (c)*cellw + ((seam_shown && seam_cell <= (c)) ? seamw : 0))
+
+    printf("=============================================================================================\n");
+    if (w_vis)
+    {
+        print_pad(COL_OF(w_cell)); printf("W(%llu)\n", (unsigned long long)rb->write);
+        print_pad(COL_OF(w_cell)); printf("v\n");
+    } else {
+        u64 width = lead + count*cellw + (seam_shown ? seamw : 0) + 5;
+        char lbl[40];
+        snprintf(lbl, sizeof(lbl), "W(%llu) ->", (unsigned long long)rb->write);
+        u64 c = width > (u64)strlen(lbl) ? width - (u64)strlen(lbl) : 0;
+        printf("\n");
+        print_pad(c); printf("%s\n", lbl);
+    }
+
+    printf("[ ... ");
+    for (u64 i = 0; i < count; ++i)
+    {
+        if (seam_shown && i == seam_cell) printf("| ");
+        printf("0x%02X ", rb->base[(lo + i) & mask]);
+    }
+
+    printf("... ]\n");
+
+    print_pad(COL_OF(r_cell)); printf("^\n");
+    print_pad(COL_OF(r_cell)); printf("R(%llu)\n", (unsigned long long)rb->read);
+
+    printf("=============================================================================================\n");
+    #undef COL_OF
+}
+
 
 static void arena_hexdump(Arena* arena)
 {
@@ -249,8 +301,75 @@ int main(void)
     arena_hexdump(&arena);
 
 
+    RingBuffer* buffer = arena_push_t_zero(&arena, RingBuffer);
+    if(!ring_buffer_alloc(buffer, KB(64)))
+    {
+        fprintf(stderr, "Could not allocate ring buffer\n");
+    }
+
+    printf("\n");
+    printf("--- RING BUFFERS ----------------------\n");
+    printf("\n");
+
+    printf("--- BUFFER ALLOCATION\n");
+    printf("--- Base Address   : 0x%016llX\n",    (unsigned long long)(uintptr_t)buffer->base);
+    printf("--- Allocated size : %12llu bytes (%.2f MB)\n", (unsigned long long)buffer->size, (f64)buffer->size/MB(1));
+    printf("--- Read head      : %18llu\n",       (unsigned long long)buffer->read);
+    printf("--- Write head     : %18llu\n",       (unsigned long long)buffer->write);
+
+    printf("Initial state of the ring buffer\n");
+    print_ring_buffer(buffer);
+
+    printf("Priming buffer: writing up to size - 1\n");
+    u8 frame[KB(64)-1];
+    ring_buffer_write(buffer, frame, sizeof(frame));
+    print_ring_buffer(buffer);
+
+    printf("Priming buffer: advancing read head up to size - 1\n");
+    u8 read = 0;
+    for (u64 i = 0; i < KB(64); i++)
+        ring_buffer_read(buffer, &read, 1);
+
+    printf("Writing actual data across the seam\n");
+    u8 ringdata[8];
+    for (size_t i = 0; i < 8; ++i)
+        ringdata[i] = (u8)i;
+    ring_buffer_write(buffer, ringdata, sizeof(ringdata));
+
+    print_ring_buffer(buffer);
+
+    printf("Attempting to loop around and write `0xDD` past the read head ... ");
+
+    u8 write_past_read[KB(64) + 1];
+    for (size_t i = 0; i < KB(64) + 1; ++i) write_past_read[i] = 0xDD;
+
+    if(!ring_buffer_write(buffer, write_past_read, sizeof(write_past_read)))
+    {
+        printf("could not write anything");
+    }
+    printf("\n");
+
+    print_ring_buffer(buffer);
+    printf("Reading actual data across the seam\n");
+    u8 ringread[8];
+    ring_buffer_read(buffer, ringread, sizeof(ringread));
+    printf("read in [ ");
+    for (size_t i = 0; i < 8; ++i)
+        printf("0x%02X ", ringread[i]);
+    printf("]\n");
+
+    print_ring_buffer(buffer);
+
+    printf("Attempting to read past the write head ... ");
+    if (!ring_buffer_read(buffer, ringread, sizeof(ringread)))
+    {
+        printf("Could not read past write head");
+    }
+    printf("\n");
 
 
+    ring_buffer_release(buffer);
+    arena_release(&arena);
 
 
     return 0;
