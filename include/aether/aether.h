@@ -902,7 +902,6 @@ b8 ring_buffer_alloc(RingBuffer* rb, u64 size)
     if (!base || rb->base != base)
     {
         os_mem_release_ring(rb->base, rb->size);
-        // handle error or panic?
         return false;
 
     }
