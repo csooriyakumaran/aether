@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `c_str` takes the arena first now — `c_str(Arena*, str8_view)` — for consistency with `arena_push_*`. Empty/`{NULL,0}` input returns an arena-allocated `""` rather than a string literal, keeping the result's ownership and writability uniform.
 - `ring_buffer_read` is now implemented as `ring_buffer_peek` + `memcpy` + `ring_buffer_advance_read`. Behavior is unchanged; the copy and zero-copy paths now share one definition of what is readable.
 
+### Fixed
+- `ring_buffer_alloc` now casts base ptr to `u8*`, fixing cpp compile error
+
+
 ## [0.0.7] - 2026-06-25
 
 ### Added
