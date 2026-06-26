@@ -23,7 +23,7 @@ option(AETHER_BUILD_INSTALL "Enable install rules" OFF)
 add_library(aether INTERFACE)
 add_library(aether::aether ALIAS aether)
 
-target_compile_features(aether INTERFACE c_std_11)
+target_compile_features(aether INTERFACE c_std_99)
 
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.h.in

@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.9] - UNRELEASED
+
+### Changed
+- The header is now standard **C99 / C++11** instead of relying on compiler extensions: compound-literal returns became named temporaries (identical `-O2` codegen), `STR` expands through a new `AETHER_LITERAL(T)` helper, and `ARENA_ALIGN` uses an `offsetof` fallback below C11. C floor drops C11 → C99 (`c_std_99`); C++ floor stays C++11.
+
 ## [0.0.8] - 2026-06-26
 
 ### Added

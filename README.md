@@ -18,6 +18,10 @@ It provides a minimal set of common primitives:
 
 The intent is not to be a framework, but rather a lightweight foundation that can be included in other libraries or applications. The motivation is to share primitives between different aerodynamic solver codes.
 
+## Requirements
+
+Single-header with no link-time dependencies. Requires **C99** or **C++11** (newer standards work too).
+
 ## Memory Arenas
 
 AETHER provides a simple linear arena allocator. 
