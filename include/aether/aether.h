@@ -57,10 +57,17 @@ extern "C"
 
 #if defined(__cplusplus)
     #define ARENA_ALIGN(T) alignof(T)
-#else
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
     #define ARENA_ALIGN(T) _Alignof(T)
+#else
+    #define ARENA_ALIGN(T) offsetof(struct {char c_; T t_;}, t_)
 #endif // __cplusplus
 
+#if defined(__cplusplus)
+    #define AETHER_LITERAL(T) T
+#else
+    #define AETHER_LITERAL(T) (T)
+#endif // __cplusplus
 
 /*----------------------------------------------------------------------------*/
 
@@ -139,10 +146,10 @@ typedef struct bytes_view { const u8* data; u64 size; } bytes_view;
 typedef bytes      str8;
 typedef bytes_view str8_view;
 
-static  inline bytes_view view_from_bytes(bytes b) { return (bytes_view){ .data = b.data, .size = b.size }; }
-static  inline str8_view  view_from_str8(str8 s) { return (str8_view){ .data = s.data, .size = s.size }; }
+static  inline bytes_view view_from_bytes(bytes b) { bytes_view v = {b.data, b.size}; return v; }
+static  inline str8_view  view_from_str8(str8 s)   { str8_view  v = {s.data, s.size}; return v; }
 
-#define STR(s) ((str8_view){ (const u8*)(s), sizeof(s) - 1 })
+#define STR(s) (AETHER_LITERAL(str8_view){ (const u8*)(s), sizeof(s) - 1 })
 #define STR8_ARG(s) ((int)((s).size)), ((const char*)((s).data))
 #define STR8_FMT "%.*s"
 
@@ -851,7 +858,10 @@ str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...)
 
 ArenaTemp arena_begin_temp(Arena* arena)
 {
-    return (ArenaTemp){ .arena = arena, .pos = arena->pos };
+    ArenaTemp tmp;
+    tmp.arena = arena;
+    tmp.pos   = arena->pos;
+    return tmp;
 }
 
 void arena_end_temp(ArenaTemp temp)
@@ -943,18 +953,19 @@ b8  ring_buffer_advance_read(RingBuffer* rb, u64 len)
 
 bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
 {
-    if (!rb || !rb->base) return (bytes_view){0};
+    bytes_view v = {0};
+    if (!rb || !rb->base) return v;
 
     u64 available = rb->write - rb->read;
 
     if (len <= available)
     {
         u64 read_idx = rb->read & (rb->size - 1);
-        return (bytes_view){.data = rb->base + read_idx, .size = len};
+        v.data = rb->base + read_idx;
+        v.size = len;
+        return v;
     }
-
-    return (bytes_view){0};
-
+    return v;
 }
 
 char* c_str(Arena* arena, str8_view s)
@@ -985,26 +996,33 @@ bytes  arena_read_file(Arena* arena, const char* path)
     b8 ok = os_file_read(h, result.data, size);
     os_file_close(h);
 
-    if (!ok) { arena_pop_to(arena, mark); return (bytes){0}; }
+    if (!ok) {
+        arena_pop_to(arena, mark);
+        result = {0};
+        return result;
+    }
 
     return result;
 }
 
 bytes_view  map_file(const char* path)
 {
+    bytes_view v = {0};
     void* h = os_file_open_for_read(path);
-    if (!h) { return (bytes_view){0}; }
+    if (!h) { return v; }
 
     u64 size = 0;
-    if (!os_file_size(h, &size)) { os_file_close(h); return (bytes_view){0}; } /* recoverable: missing/inaccessible file */
-    if (size == 0) { os_file_close(h); return (bytes_view){.data=NULL, .size=0};}
+    if (!os_file_size(h, &size)) { os_file_close(h); return v; } /* recoverable: missing/inaccessible file */
+    if (size == 0) { os_file_close(h); return v; }
 
     u8* data = (u8*)os_file_map(h, size);
     os_file_close(h);
 
-    if (!data) { return (bytes_view){0}; }
+    if (!data) { return v; }
 
-    return (bytes_view){.data=data, .size=size};
+    v.data = data;
+    v.size = size;
+    return v;
 }
 
 void  unmap_file(bytes_view buf)
@@ -1041,7 +1059,10 @@ i32 str8_cmp(str8_view a, str8_view b)
 str8_view str8_slice(str8_view s, u64 start, u64 end)
 {
     AETHER_ASSERT_(start <= end && end <= s.size);
-    return (str8_view){ .data = s.data + start, .size = end - start };
+    str8_view v;
+    v.data = s.data + start;
+    v.size = end - start;
+    return v;
 }
 
 static b8 char_is_ws(u8 c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
@@ -1050,9 +1071,11 @@ str8_view str8_trim(str8_view s)
 {
     u64 start = 0;
     while (start < s.size && char_is_ws(s.data[start])) start++;
+
     u64 end   = s.size;
     while (end > start && char_is_ws(s.data[end-1])) end--;
-    return (str8_view){ .data = s.data + start, .size = end - start };
+
+    return str8_slice(s, start, end);
 }
 
 
