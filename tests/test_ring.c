@@ -198,6 +198,49 @@ static void test_guards(void)
     ring_buffer_release(&rb);
 }
 
+static void test_available_advance(void)
+{
+    SECTION("ring: available tracks write-read; advance_read consumes without copying");
+
+    RingBuffer rb = {0};
+    ASSERT(ring_buffer_alloc(&rb, KB(4)));
+
+    ASSERT(ring_buffer_available(&rb) == 0);         /* empty */
+
+    u8 src[128];
+    for (u32 i = 0; i < 128; ++i) src[i] = (u8)(i + 1);
+    ASSERT(ring_buffer_write(&rb, src, 128));
+    ASSERT(ring_buffer_available(&rb) == 128);       /* tracks bytes written */
+
+    /* zero-copy consume: peek a contiguous view, use it in place, then advance */
+    bytes_view v = ring_buffer_peek(&rb, 50);
+    ASSERT(v.size == 50);
+    ASSERT(memcmp(v.data, src, 50) == 0);
+    ASSERT(ring_buffer_advance_read(&rb, 50));        /* release exactly what was used */
+    ASSERT(rb.read == 50);
+    ASSERT(ring_buffer_available(&rb) == 78);         /* 128 - 50 */
+
+    bytes_view w = ring_buffer_peek(&rb, 78);
+    ASSERT(w.size == 78);
+    ASSERT(memcmp(w.data, src + 50, 78) == 0);        /* window moved past the advance */
+
+    /* advance past what is available is rejected and leaves read untouched */
+    ASSERT(!ring_buffer_advance_read(&rb, 79));       /* 79 > 78 available */
+    ASSERT(rb.read == 50);
+    ASSERT(ring_buffer_available(&rb) == 78);
+
+    ASSERT(ring_buffer_advance_read(&rb, 78));         /* advancing exactly to empty is allowed */
+    ASSERT(ring_buffer_available(&rb) == 0);
+    ASSERT(rb.read == rb.write);
+
+    ring_buffer_release(&rb);
+
+    /* guards: zero/false on a released or NULL buffer, never a deref */
+    ASSERT(ring_buffer_available(&rb) == 0);
+    ASSERT(ring_buffer_available(NULL) == 0);
+    ASSERT(!ring_buffer_advance_read(NULL, 1));
+}
+
 /* Pump far more than `size` bytes through with chunk sizes that do not divide
    `size`, comparing a deterministic producer stream against the consumer.
    This exercises index masking and counter advance over many wraps. */
@@ -272,6 +315,7 @@ static TestCase g_cases[] = {
     {"roundtrip",       test_roundtrip},
     {"seam",            test_seam},
     {"peek_no_consume", test_peek_no_consume},
+    {"available_advance", test_available_advance},
     {"guards",          test_guards},
     {"stream",          test_stream},
     {"counter_wrap",    test_counter_wrap},

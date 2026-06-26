@@ -145,17 +145,17 @@ static void test_c_str(void)
 
     Arena arena = arena_alloc(KB(4));
 
-    char* h = c_str(STR("hello"), &arena);
+    char* h = c_str(&arena, STR("hello"));
     ASSERT(strcmp(h, "hello") == 0);
 
     str8 copy = arena_push_str8_copy(&arena, STR("world"));
-    char* w = c_str(view_from_str8(copy), &arena);
+    char* w = c_str(&arena, view_from_str8(copy));
     ASSERT(strcmp(w, "world") == 0);
 
-    char* e = c_str(STR(""), &arena);
+    char* e = c_str(&arena, STR(""));
     ASSERT(strcmp(e, "") == 0);
 
-    char* z = c_str((str8_view){0}, &arena); /* NULL data, zero size */
+    char* z = c_str(&arena, (str8_view){0}); /* NULL data, zero size */
     ASSERT(strcmp(z, "") == 0);
 
     arena_release(&arena);
