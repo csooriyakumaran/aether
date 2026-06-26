@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.8] - UNRELEASED
+
+### Added
+- `ring_buffer_available`: returns the number of unread bytes (`write - read`) in the buffer, or `0` for a `NULL`/unallocated buffer.
+- `ring_buffer_advance_read`: advances the read cursor by `len` without copying, rejecting an advance past the written data. Enables a zero-copy consume — `ring_buffer_peek` to get a contiguous view, use it in place, then `ring_buffer_advance_read` to release exactly what was consumed.
+
+### Changed
+- `ring_buffer_read` is now implemented as `ring_buffer_peek` + `memcpy` + `ring_buffer_advance_read`. Behavior is unchanged; the copy and zero-copy paths now share one definition of what is readable.
+
 ## [0.0.7] - 2026-06-25
 
 ### Added
