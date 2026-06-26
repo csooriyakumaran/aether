@@ -871,7 +871,7 @@ b8 ring_buffer_alloc(RingBuffer* rb, u64 size)
 
     u64 ring_size = AETHER_MAX_(size_pow2, page_granularity);
 
-    rb->base = os_mem_reserve_ring(ring_size);
+    rb->base = (u8*)os_mem_reserve_ring(ring_size);
     if (!rb->base) return false;
 
     rb->size = ring_size;
@@ -881,7 +881,7 @@ b8 ring_buffer_alloc(RingBuffer* rb, u64 size)
         return false;
     }
 
-    u8* base = os_mem_map_ring(rb->base, rb->size);
+    u8* base = (u8*)os_mem_map_ring(rb->base, rb->size);
     if (!base || rb->base != base)
     {
         os_mem_release_ring(rb->base, rb->size);
