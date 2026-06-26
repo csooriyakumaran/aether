@@ -21,7 +21,9 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
 # run a native command, honour -DryRun, and fail hard on a nonzero exit code
 # ($ErrorActionPreference='Stop' does NOT catch native exit codes, only cmdlets).
-function Exec([string]$file, [Parameter(ValueFromRemainingArguments)][string[]]$cmdArgs) {
+# $cmdArgs MUST be passed as an explicit @(...) array: a remaining-args parameter
+# would let PowerShell mis-parse tokens like '--test-dir' as parameters of Exec.
+function Exec([string]$file, [string[]]$cmdArgs) {
     Write-Host ">> $file $($cmdArgs -join ' ')" -ForegroundColor Cyan
     if ($DryRun) { Write-Host '   (dry-run, skipped)' -ForegroundColor DarkGray; return }
     & $file @cmdArgs
@@ -75,30 +77,30 @@ $notes | Set-Content $notesFile -Encoding utf8
 # -DCMAKE_BUILD_TYPE=Release covers Ninja (single-config); --config Release covers
 # MSVC (multi-config). Each is a harmless no-op under the other generator.
 $build = Join-Path $root 'build'
-Exec cmake -S $root -B $build -DCMAKE_BUILD_TYPE=Release -DAETHER_BUILD_TESTS=ON -DAETHER_BUILD_INSTALL=ON
-Exec cmake --build $build --config Release
-Exec ctest --test-dir $build -C Release --output-on-failure
+Exec cmake @('-S', $root, '-B', $build, '-DCMAKE_BUILD_TYPE=Release', '-DAETHER_BUILD_TESTS=ON', '-DAETHER_BUILD_INSTALL=ON')
+Exec cmake @('--build', $build, '--config', 'Release')
+Exec ctest @('--test-dir', $build, '-C', 'Release', '--output-on-failure')
 
 # --- release commit + annotated tag + push -------------------------------
 # Tag points at this commit, so the published artifacts provably match the tag.
 if (-not $DryRun) { [System.IO.File]::WriteAllText($versionFile, "$release`r`n") }
-Exec git -C $root add VERSION
-Exec git -C $root commit -m "release: $tag"
-Exec git -C $root tag -a $tag -m "aether $tag"
-Exec git -C $root push origin master
-Exec git -C $root push origin $tag
+Exec git @('-C', $root, 'add', 'VERSION')
+Exec git @('-C', $root, 'commit', '-m', "release: $tag")
+Exec git @('-C', $root, 'tag', '-a', $tag, '-m', "aether $tag")
+Exec git @('-C', $root, 'push', 'origin', 'master')
+Exec git @('-C', $root, 'push', 'origin', $tag)
 
 # --- artifacts: install -> zip -> gh release -----------------------------
 $stage = Join-Path $root "releases/$tag"
 $zip   = Join-Path $root "releases/aether-$tag.zip"
-Exec cmake --install $build --config Release --prefix $stage
+Exec cmake @('--install', $build, '--config', 'Release', '--prefix', $stage)
 if (-not $DryRun) { Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force }
-Exec gh release create $tag --title "aether $tag" --notes-file $notesFile $zip
+Exec gh @('release', 'create', $tag, '--title', "aether $tag", '--notes-file', $notesFile, $zip)
 
 # --- re-arm for the next cycle -------------------------------------------
 if (-not $DryRun) { [System.IO.File]::WriteAllText($versionFile, "$NextVersion`r`n") }
-Exec git -C $root add VERSION
-Exec git -C $root commit -m "chore: bump version to $NextVersion"
-Exec git -C $root push origin master
+Exec git @('-C', $root, 'add', 'VERSION')
+Exec git @('-C', $root, 'commit', '-m', "chore: bump version to $NextVersion")
+Exec git @('-C', $root, 'push', 'origin', 'master')
 
 Write-Host "Done: published $tag, bumped to $NextVersion." -ForegroundColor Green
