@@ -9,7 +9,7 @@
 
   https://github.com/csooriyakumaran/aether
 
-  DESCROPTIONS
+  DESCRIPTIONS
   ------------
 
   Core types, memory arenas, spans, assertions, and utility primitives.
@@ -18,7 +18,7 @@
       #define AETHER_IMPLEMENTATION
   before you include this file in *one* C or C++ file to create the implementation.
 
-  // i.e. 
+  // i.e.
   #include ...
   #include ...
   #include ...
@@ -51,7 +51,7 @@ extern "C"
 
 #if defined(_MSC_VER)
     #define DEBUG_BREAK() __debugbreak()
-#else 
+#else
     #define DEBUG_BREAK() __builtin_trap()
 #endif // _MSC_VER
 
@@ -92,7 +92,7 @@ extern "C"
 #define FATAL(msg) do {  \
     fprintf(stderr, "FATAL ERROR: %s [%s:%d]\n", msg, __FILE__, __LINE__); \
     DEBUG_BREAK(); \
-} while(0)
+} while (0)
 
 /* ARRAYS ONLY: decays silently on pointers */
 #define AETHER_ARRAY_COUNT_(a) (sizeof(a) / sizeof((a)[0]))
@@ -101,7 +101,7 @@ extern "C"
     #ifndef ARRAY_COUNT
     #define ARRAY_COUNT(a) AETHER_ARRAY_COUNT_(a)
     #endif // ARRAY_COUNT
-#endif // AETHER_NO_ARRAY_COUNT_
+#endif // AETHER_NO_ARRAY_COUNT
 
 #define AETHER_MIN_(a, b) ((a) < (b) ? (a) : (b))
 #define AETHER_MAX_(a, b) ((a) > (b) ? (a) : (b))
@@ -133,13 +133,14 @@ typedef double   f64;
 
 typedef struct bytes      {       u8* data; u64 size; } bytes;
 typedef struct bytes_view { const u8* data; u64 size; } bytes_view;
-static  inline bytes_view view_from_bytes(bytes b) { return (bytes_view){ .data = b.data, .size = b.size }; }
 
 /*-------- S T R I N G S -----------------------------------------------------*/
 
 typedef bytes      str8;
 typedef bytes_view str8_view;
-static  inline     str8_view view_from_str8(str8 s) { return (str8_view){ .data = s.data, .size = s.size }; }
+
+static  inline bytes_view view_from_bytes(bytes b) { return (bytes_view){ .data = b.data, .size = b.size }; }
+static  inline str8_view  view_from_str8(str8 s) { return (str8_view){ .data = s.data, .size = s.size }; }
 
 #define STR(s) ((str8_view){ (const u8*)(s), sizeof(s) - 1 })
 #define STR8_ARG(s) ((int)((s).size)), ((const char*)((s).data))
@@ -206,12 +207,11 @@ void  arena_clear(Arena* arena);
 #define arena_push_t(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), ArenaZero_FollowPolicy)
 #define arena_push_array(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), ArenaZero_FollowPolicy)
 
-// explicity force zeroing after push regargless of ArenaFlags
+// explicitly force zeroing after push regardless of ArenaFlags
 #define arena_push_t_zero(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), ArenaZero_Force)
 #define arena_push_array_zero(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), ArenaZero_Force)
 
-// todo(chris): figure out the semantics
-// explicity force no-zeroing after push regargless of ArenaFlags
+// explicitly force no-zeroing after push regardless of ArenaFlags
 #define arena_push_t_nozero(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), ArenaZero_Never)
 #define arena_push_array_nozero(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), ArenaZero_Never)
 
@@ -220,7 +220,7 @@ char* arena_push_cstring(Arena* arena, const char* src);
 char* arena_push_cstring_fmt(Arena* arena, const char* fmt, ...);
 
 str8  arena_push_str8_copy(Arena* arena, str8_view src);
-str8  arena_push_str8_from_cstring(Arena*, const char* src);
+str8  arena_push_str8_from_cstring(Arena* arena, const char* src);
 str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...);
 
 // temporary arenas
@@ -236,25 +236,24 @@ typedef struct RingBuffer
     u64 write;
 } RingBuffer;
 
-b8 ring_buffer_alloc(RingBuffer* rb, u64 size);
-void ring_buffer_release(RingBuffer* rb);
-u64 ring_buffer_available(RingBuffer* rb);
-b8  ring_buffer_read(RingBuffer* rb, void* dst, u64 len);
-b8  ring_buffer_write(RingBuffer* rb, const void* src, u64 len);
+b8         ring_buffer_alloc(RingBuffer* rb, u64 size);
+void       ring_buffer_release(RingBuffer* rb);
+u64        ring_buffer_available(RingBuffer* rb);
+b8         ring_buffer_read(RingBuffer* rb, void* dst, u64 len);
+b8         ring_buffer_write(RingBuffer* rb, const void* src, u64 len);
+b8         ring_buffer_advance_read(RingBuffer* rb, u64 len);
 bytes_view ring_buffer_peek(RingBuffer* rb, u64 len);
-b8  ring_buffer_advance_read(RingBuffer* rb, u64 len);
-
 
 /* -------- S T R I N G - O P E R A T I O N S ------------------------------ */
 // convert to null-terminated string
-char*     c_str(str8_view s, Arena* arena);
+char*     c_str(Arena* arena, str8_view s);
 
 b8        str8_eq(str8_view a, str8_view b);
 i32       str8_cmp(str8_view a, str8_view b); /* memcmp-style ordering */
 str8_view str8_slice(str8_view s, u64 start, u64 end);
 str8_view str8_trim(str8_view s);
 
-// todo(chris): additional string operations (find, split, )
+// todo(chris): additional string operations (find, split, etc.)
 
 // file i/o
 bytes arena_read_file(Arena* arena, const char* path);
@@ -268,7 +267,6 @@ void       unmap_file(bytes_view map);
 /* ------- H E L P E R S --------------------------------------------------- */
 u64 time_mark(void);
 f64 time_elapsed_sec(u64 start, u64 end);
-
 
 #ifdef __cplusplus
 }
@@ -294,7 +292,7 @@ f64 time_elapsed_sec(u64 start, u64 end);
 
     #include <windows.h>
 
-    /* define functions required for ring buffers to avoid compile-time link requirement */
+    /* required for ring buffers to avoid compile-time link requirement */
     typedef PVOID (WINAPI *VirtualAlloc2_fn)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, void*, ULONG);
     typedef PVOID (WINAPI *MapViewOfFile3_fn)(HANDLE, HANDLE, PVOID, ULONG64, SIZE_T, ULONG, ULONG, void*, ULONG);
     typedef BOOL  (WINAPI *UnmapViewOfFile2_fn)(HANDLE, PVOID, ULONG);
@@ -320,28 +318,26 @@ extern "C"
 
 static u64 os_mem_pagesize(void)
 {
-
 #ifdef _WIN32
-        SYSTEM_INFO sysinfo = {0};
-        GetSystemInfo(&sysinfo);
-        u64 pagesize = (u64)sysinfo.dwPageSize; 
-        return pagesize;
+    SYSTEM_INFO sysinfo = {0};
+    GetSystemInfo(&sysinfo);
+    u64 pagesize = (u64)sysinfo.dwPageSize;
+    return pagesize;
 #else
-        #error "AETHER: OS memory page size not implemented for this platform"
+    #error "AETHER: OS memory page size not implemented for this platform"
 #endif
 }
 
 static u64 os_mem_pagegranularity(void)
 {
 #ifdef _WIN32
-        SYSTEM_INFO sysinfo = {0};
-        GetSystemInfo(&sysinfo);
-        u64 page_granularity = (u64)sysinfo.dwAllocationGranularity; 
-        return page_granularity;
+    SYSTEM_INFO sysinfo = {0};
+    GetSystemInfo(&sysinfo);
+    u64 page_granularity = (u64)sysinfo.dwAllocationGranularity;
+    return page_granularity;
 #else
-        #error "AETHER: OS memory page granularity not implemented for this platform"
+    #error "AETHER: OS memory page granularity not implemented for this platform"
 #endif
-
 }
 
 static void* os_mem_reserve(u64 size)
@@ -386,8 +382,6 @@ static b8 os_mem_release(void* ptr, u64 size)
  *              or os_file_open that allows user
  *              defined read/write mode */
 
-/* ... */
-
 static void* os_file_open_for_read(const char* path)
 {
 #ifdef _WIN32
@@ -413,6 +407,7 @@ static void* os_file_open_for_read(const char* path)
 static void* os_file_open_for_write(const char* path)
 {
 #ifdef _WIN32
+    (void)path;
     return NULL;
 #else
     #error "AETHER: OS file open for write not implemented for this platform"
@@ -431,9 +426,8 @@ static void os_file_close(void* handle)
 static b8  os_file_size(void* handle, u64* out_size)
 {
 #ifdef _WIN32
-
     LARGE_INTEGER filesize;
-    if(!GetFileSizeEx(handle, &filesize))
+    if (!GetFileSizeEx(handle, &filesize))
         return false;
 
     *out_size = (u64)filesize.QuadPart;
@@ -446,22 +440,21 @@ static b8  os_file_size(void* handle, u64* out_size)
 static b8  os_file_read(void* handle, void* dst, u64 size)
 {
 #ifdef _WIN32
-
     u8* cursor = (u8*)dst;
     u64 remaining = size;
 
-    while(remaining >0)
+    while (remaining > 0)
     {
         /* Note(Chris):
-         * - capping at MAXWORD (~4 GB) may be exessive
+         * - capping at MAXDWORD (~4 GB) may be excessive
          * - could reduce in future to 1 GB */
-        DWORD chunk = (remaining  > MAXDWORD) ? MAXDWORD : (DWORD)remaining;
+        DWORD chunk = (remaining > MAXDWORD) ? MAXDWORD : (DWORD)remaining;
         DWORD bytes_read = 0;
 
         if (!ReadFile(handle, cursor, chunk, &bytes_read, NULL))
             return false;
 
-        if (bytes_read == 0) /* EOF before reaching reqested size */
+        if (bytes_read == 0) /* EOF before reaching requested size */
             return false;
 
         cursor    += bytes_read;
@@ -484,7 +477,7 @@ static void* os_file_map(void* handle, u64 size)
     CloseHandle(hmap);
     return data;
 #else
-    #error "AETHER: Os file map not implemented on this platform"
+    #error "AETHER: OS file map not implemented for this platform"
 #endif
 }
 
@@ -495,9 +488,8 @@ static void* os_mem_reserve_ring(u64 size)
     if (!va2) return NULL;
     return va2(NULL, NULL, 2*size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, NULL, 0);
 #else
-    #error "AETHER: OS memory ring allocation ngs not implemented for this platform"
+    #error "AETHER: OS memory ring allocation not implemented for this platform"
 #endif
-
 }
 
 static b8 os_mem_split_ring(void* ptr, u64 size)
@@ -507,7 +499,6 @@ static b8 os_mem_split_ring(void* ptr, u64 size)
 #else
     #error "AETHER: OS memory ring splitting not implemented for this platform"
 #endif
-
 }
 
 static void* os_mem_map_ring(void* ptr, u64 size)
@@ -528,7 +519,7 @@ static void* os_mem_map_ring(void* ptr, u64 size)
     if (!base || !mirror) return NULL;
     return (void*)base;
 #else
-    #error "AETHER: Os file map not implemented on this platform"
+    #error "AETHER: OS mem map ring not implemented for this platform"
 #endif
 }
 
@@ -555,7 +546,7 @@ static void os_file_unmap(const void* ptr, u64 size)
     (void)size;
     UnmapViewOfFile(ptr);
 #else
-    #error "AETHER: Os file unmap not implemented on this platform"
+    #error "AETHER: OS file unmap not implemented for this platform"
 #endif
 }
 
@@ -579,7 +570,6 @@ static u64 os_time_frequency(void)
 #else
     #error "AETHER: OS time frequency not implemented for this platform"
 #endif
-
 }
 
 static u64 round_up_power_2(u64 n)
@@ -604,7 +594,6 @@ static u64 align_forward_u64(u64 value, u64 align)
     return (value + mask) & ~mask;
 }
 
-
 static void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
 {
     if (new_pos <= arena->commit_size)
@@ -622,14 +611,13 @@ static void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
     }
 
     new_commit_size = AETHER_MIN_(new_commit_size, arena->reserved_size);
-        
+
     b8 committed = os_mem_commit(arena->base + arena->commit_size, new_commit_size - arena->commit_size);
-    if(!committed) FATAL("Memory commit faild");
+    if (!committed) FATAL("Memory commit failed");
 
     arena->commit_size = new_commit_size;
 
 }
-
 
 static void arena_decommit_tail(Arena* arena, u64 new_pos)
 {
@@ -642,7 +630,6 @@ static void arena_decommit_tail(Arena* arena, u64 new_pos)
     // We don't have a tail
     if (new_commit_size > arena->commit_size)
         return;
-
 
     u64 decommit_size = arena->commit_size - new_commit_size;
 
@@ -675,7 +662,7 @@ Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_
     if (initial_commit_size > 0)
     {
         b8 committed = os_mem_commit(arena.base, initial_commit_size);
-        if(!committed) FATAL("Failed to commit memory");
+        if (!committed) FATAL("Failed to commit memory");
     }
 
     arena.reserved_size = reserve_size;
@@ -693,20 +680,18 @@ Arena arena_alloc(u64 reserve_size)
 #if AETHER_ENABLE_ASSERTS
     // Debug defaults
     u64        initial_commit = 0;
-    ArenaFlags flags          = ArenaFlags_AlwaysZero | 
+    ArenaFlags flags          = ArenaFlags_AlwaysZero |
                                 ArenaFlags_DebugFillOnClear |
                                 ArenaFlags_Decommit;
     u32 granularity           = 1; /* commit and decommit single-page units */
-#else 
+#else
     // Performance defaults
     u64        initial_commit = 0;
     ArenaFlags flags          = ArenaFlags_None;
     u32        granularity    = 1;
 #endif
     return arena_alloc_ex(reserve_size, initial_commit, granularity, flags);
-
 }
-
 
 void arena_release(Arena* arena)
 {
@@ -718,7 +703,6 @@ void arena_release(Arena* arena)
     arena->commit_size   = 0;
     arena->pos           = 0;
 }
-
 
 void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
 {
@@ -748,7 +732,6 @@ void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
         memset(result, 0, (size_t)size);
 
     return result;
-
 }
 
 void arena_pop_to(Arena* arena, u64 pos)
@@ -768,7 +751,7 @@ void arena_pop_to(Arena* arena, u64 pos)
 
 void arena_pop(Arena* arena, u64 amt)
 {
-    if(amt > arena->pos)
+    if (amt > arena->pos)
         amt = arena->pos;
 
     arena_pop_to(arena, arena->pos - amt);
@@ -785,7 +768,6 @@ char* arena_push_cstring(Arena* arena, const char* src)
     char *dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
     memcpy(dst, src, len + 1);
     return dst;
-
 }
 
 static inline char* arena_push_cstring_fmtv(Arena* arena, const char* fmt, va_list args)
@@ -798,7 +780,7 @@ static inline char* arena_push_cstring_fmtv(Arena* arena, const char* fmt, va_li
 
     AETHER_ASSERT_(len >= 0);
 
-    /* use 1-byte alignement to maximum packing */
+    /* use 1-byte alignment to maximum packing */
     char* buffer = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
     int written = vsnprintf(buffer, (size_t)len + 1, fmt, args);
     AETHER_ASSERT_(written == len);
@@ -822,7 +804,6 @@ str8  arena_push_str8_copy(Arena* arena, str8_view src)
     result.data = (u8*)arena_push(arena, src.size, 1, ArenaZero_FollowPolicy);
     memcpy(result.data, src.data, src.size);
     return result;
-
 }
 
 str8  arena_push_str8_from_cstring(Arena* arena, const char* src)
@@ -857,7 +838,6 @@ static inline str8  arena_push_str8_fmtv(Arena* arena, const char* fmt, va_list 
     result.data = (u8*)buffer;
     result.size = (u64)len; /* excludes null terminator */
     return result;
-
 }
 
 str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...)
@@ -895,7 +875,7 @@ b8 ring_buffer_alloc(RingBuffer* rb, u64 size)
     if (!rb->base) return false;
 
     rb->size = ring_size;
-    if(!os_mem_split_ring(rb->base, rb->size))
+    if (!os_mem_split_ring(rb->base, rb->size))
     {
         os_mem_release(rb->base, rb->size);
         return false;
@@ -944,7 +924,7 @@ b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len)
 {
     if (!rb || !rb->base) return false;
     if (len > rb->size ) return false;
-    /* reject if it will overright un-read data */
+    /* reject if it will overwrite unread data */
     if (len > rb->size - (rb->write - rb->read)) return false;
 
     u64 write_idx = rb->write & (rb->size - 1);
@@ -977,13 +957,13 @@ bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
 
 }
 
-
-char* c_str(str8_view s, Arena* arena)
+char* c_str(Arena* arena, str8_view s)
 {
-    if (!s.data || !s.size) return "";
+    AETHER_ASSERT_(arena != NULL);
+    AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
 
     char* out = (char*)arena_push(arena, s.size + 1, 1, ArenaZero_Never);
-    memcpy(out, s.data, s.size);
+    if (s.size) memcpy(out, s.data, s.size);
     out[s.size] = '\0';
     return out;
 }
@@ -1022,7 +1002,7 @@ bytes_view  map_file(const char* path)
     u8* data = (u8*)os_file_map(h, size);
     os_file_close(h);
 
-    if(!data) { return (bytes_view){0}; }
+    if (!data) { return (bytes_view){0}; }
 
     return (bytes_view){.data=data, .size=size};
 }
