@@ -57,10 +57,8 @@ extern "C"
 
 #if defined(__cplusplus)
     #define ARENA_ALIGN(T) alignof(T)
-#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-    #define ARENA_ALIGN(T) _Alignof(T)
 #else
-    #define ARENA_ALIGN(T) offsetof(struct {char c_; T t_;}, t_)
+    #define ARENA_ALIGN(T) _Alignof(T)
 #endif // __cplusplus
 
 #if defined(__cplusplus)
@@ -80,11 +78,11 @@ extern "C"
 #endif // AETHER_ENABLE_ASSERTS
 
 #if AETHER_ENABLE_ASSERTS
-    #define AETHER_ASSERT_(x) do {                                                                      \
-        if (!(x)) {                                                                             \
+    #define AETHER_ASSERT_(x) do {                                                  \
+        if (!(x)) {                                                                 \
             fprintf(stderr, "ASSERT FAILED: %s [%s:%d]\n", #x, __FILE__, __LINE__); \
-            DEBUG_BREAK();                                                                      \
-        }                                                                                       \
+            DEBUG_BREAK();                                                          \
+        }                                                                           \
     } while (0)
 #else
     #define AETHER_ASSERT_(x) ((void)0)
@@ -998,7 +996,8 @@ bytes  arena_read_file(Arena* arena, const char* path)
 
     if (!ok) {
         arena_pop_to(arena, mark);
-        result = {0};
+        result.data = NULL;
+        result.size = 0;
         return result;
     }
 
