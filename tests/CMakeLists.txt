@@ -51,3 +51,29 @@ set(RING_TEST_CASES mirror alloc roundtrip seam peek_no_consume available_advanc
 foreach(case ${RING_TEST_CASES})
     add_test(NAME ring_${case} COMMAND test_ring ${case})
 endforeach()
+
+# --- standard-conformance probes (compile is the test; pedantic where supported) ---
+enable_language(CXX)   # only needed when building tests; keeps the top-level project C-only
+
+add_executable(verify_c11   verify_c11.c)
+add_executable(verify_cxx11 verify_cxx11.cpp)
+
+target_link_libraries(verify_c11   PRIVATE aether::aether)
+target_link_libraries(verify_cxx11 PRIVATE aether::aether)
+
+# *_EXTENSIONS OFF forces -std=c11 / -std=c++11 (not the gnu* variants), so extensions are rejected
+set_target_properties(verify_c11 PROPERTIES
+    C_STANDARD 11   C_STANDARD_REQUIRED ON   C_EXTENSIONS OFF)
+set_target_properties(verify_cxx11 PROPERTIES
+    CXX_STANDARD 11 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
+if(MSVC)
+    target_compile_options(verify_c11   PRIVATE /permissive-)
+    target_compile_options(verify_cxx11 PRIVATE /permissive-)
+else()
+    target_compile_options(verify_c11   PRIVATE -pedantic-errors)
+    target_compile_options(verify_cxx11 PRIVATE -pedantic-errors)
+endif()
+
+add_test(NAME verify_c11   COMMAND verify_c11)
+add_test(NAME verify_cxx11 COMMAND verify_cxx11)
