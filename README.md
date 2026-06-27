@@ -20,7 +20,7 @@ The intent is not to be a framework, but rather a lightweight foundation that ca
 
 ## Requirements
 
-Single-header with no link-time dependencies. Requires **C99** or **C++11** (newer standards work too).
+Single-header with no link-time dependencies. Requires **C11** or **C++11** (newer standards work too).
 
 ## Memory Arenas
 

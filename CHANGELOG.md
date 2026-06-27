@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.9] - UNRELEASED
 
 ### Changed
-- The header is now standard **C99 / C++11** instead of relying on compiler extensions: compound-literal returns became named temporaries (identical `-O2` codegen), `STR` expands through a new `AETHER_LITERAL(T)` helper, and `ARENA_ALIGN` uses an `offsetof` fallback below C11. C floor drops C11 → C99 (`c_std_99`); C++ floor stays C++11.
+- The header is now standard-conformant **C11 / C++11** instead of relying on compiler extensions: C99 compound-literal returns became named temporaries (identical `-O2` codegen), and `STR` expands through a new `AETHER_LITERAL(T)` helper (`(T)` in C, `T{}` in C++). Previously the header compiled as C++ only via extensions (designated initializers and the `(T){…}` compound-literal syntax). Conformance is now gated by pedantic C11 / C++11 compile probes in the test suite.
 
 ## [0.0.8] - 2026-06-26
 
