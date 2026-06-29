@@ -250,6 +250,8 @@ b8         ring_buffer_advance_read(RingBuffer* rb, u64 len);
 bytes_view ring_buffer_peek(RingBuffer* rb, u64 len);
 
 /* -------- S T R I N G - O P E R A T I O N S ------------------------------ */
+str8_view view_from_c_str(const char* s);
+
 // convert to null-terminated string
 char*     c_str(Arena* arena, str8_view s);
 
@@ -257,6 +259,9 @@ b8        str8_eq(str8_view a, str8_view b);
 i32       str8_cmp(str8_view a, str8_view b); /* memcmp-style ordering */
 str8_view str8_slice(str8_view s, u64 start, u64 end);
 str8_view str8_trim(str8_view s);
+b8        str8_has_prefix(str8_view s, str8_view prefix);
+b8        str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after);
+// str8_view* str8_split(Arena* arena str8_view s, str8_view delimiter, u64* out_len);
 
 // todo(chris): additional string operations (find, split, etc.)
 
@@ -966,6 +971,21 @@ bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
     return v;
 }
 
+str8_view view_from_c_str(const char* s)
+{
+    str8_view v = {0};
+
+    if (!s) return v;
+
+    u64 len = (u64)strlen(s);
+    if (!len) return v;
+
+    v.data = (const u8*)s;
+    v.size = len;
+
+    return v;
+}
+
 char* c_str(Arena* arena, str8_view s)
 {
     AETHER_ASSERT_(arena != NULL);
@@ -1053,6 +1073,47 @@ i32 str8_cmp(str8_view a, str8_view b)
     if (r != 0) return r;
     if (a.size != b.size) return (a.size < b.size) ? -1 : 1;
     return 0;
+}
+
+b8 str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after)
+{
+    AETHER_ASSERT_(s.data   != NULL || s.size   == 0);
+    AETHER_ASSERT_(sep.data != NULL || sep.size == 0);
+
+    str8_view empty = {0};
+
+    if (sep.size == 0 || sep.size > s.size)
+    {
+        if (before) *before = s;
+        if (after)  *after  = empty;
+        return false;
+    }
+
+    for (u64 i = 0; i + sep.size <= s.size; ++i)
+    {
+        if (memcmp(s.data + i, sep.data, sep.size) == 0)
+        {
+            if (before) *before = str8_slice(s, 0, i);
+            if (after)  *after  = str8_slice(s, i + sep.size, s.size);
+            return true;
+        }
+    }
+
+    if (before) *before = s;
+    if (after)  *after  = empty;
+    return false;
+}
+
+b8 str8_has_prefix(str8_view s, str8_view prefix)
+{
+    if (!prefix.data || !prefix.size || !s.data || s.size == 0) return false;
+
+    if (s.size < prefix.size) return false;
+
+    for (u64 i = 0; i < prefix.size; ++i)
+        if (s.data[i] != prefix.data[i]) return false;
+
+    return true;
 }
 
 str8_view str8_slice(str8_view s, u64 start, u64 end)
