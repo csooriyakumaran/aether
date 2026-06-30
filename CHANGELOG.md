@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.0.9] - UNRELEASED
+## [0.0.9] - 2026-06-30
 
 ### Added
 - `str8_has_prefix` / `str8_cut` / `view_from_c_str`: prefix test; split-once on a separator (fills `before`/`after` views and returns `b8` found/not-found); and a `str8_view` over a NUL-terminated C string. Covered in `tests/test_strings.c`.
