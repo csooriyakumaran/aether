@@ -6,8 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.0.9] - UNRELEASED
 
+### Added
+- `str8_has_prefix` / `str8_cut` / `view_from_c_str`: prefix test; split-once on a separator (fills `before`/`after` views and returns `b8` found/not-found); and a `str8_view` over a NUL-terminated C string. Covered in `tests/test_strings.c`.
+- Numeric-limit macros `I8_MIN`…`I64_MIN`, `I8_MAX`…`I64_MAX`, `U8_MAX`…`U64_MAX`, with `AETHER_NO_NUMERIC_LIMITS` to opt out (the public names defer to any pre-existing definition; the values are always available as private `AETHER_*_` names). These replace the limits previously reached for via `<stdint.h>`/`<limits.h>`.
+- `b32`: 32-bit boolean alias (over `u32`), alongside the existing `b8`.
+
 ### Changed
 - The header is now standard-conformant **C11 / C++11** instead of relying on compiler extensions: C99 compound-literal returns became named temporaries (identical `-O2` codegen), and `STR` expands through a new `AETHER_LITERAL(T)` helper (`(T)` in C, `T{}` in C++). Previously the header compiled as C++ only via extensions (designated initializers and the `(T){…}` compound-literal syntax). Conformance is now gated by pedantic C11 / C++11 compile probes in the test suite.
+- Dropped the `<stdint.h>` and `<stdbool.h>` includes. Fixed-width aliases (`i8`…`u64`, `f32`/`f64`) are now plain typedefs over the built-in types, each guarded by a `_Static_assert` on its `sizeof`, so a platform whose type widths differ fails to compile rather than silently misbehaving. `b8` is now an alias for `u8` (was `bool`).
+- **Breaking:** the `DEBUG_BREAK()` macro is renamed `AETHER_DEBUG_BREAK()` to keep aether's macro namespace prefixed. Consumers using `DEBUG_BREAK` directly must update.
+
+### Fixed
+- `arena_push_array` / `arena_push_array_zero` / `arena_push_array_nozero` now reject a `count * sizeof(T)` product that would overflow `u64`. The size is computed in a checked `static inline` helper (`arena_push_array_`) rather than inline in the macro, preventing a silently-undersized allocation.
 
 ## [0.0.8] - 2026-06-26
 

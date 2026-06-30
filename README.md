@@ -26,7 +26,7 @@ Single-header with no link-time dependencies. Requires **C11** or **C++11** (new
 
 AETHER provides a simple linear arena allocator. 
 
-An arena reserves a block of virtual address space and commits memory as needed. Allocations are performed by bumping a position pointer forward. Individual allocations are not freed; instead, memory is in bulk by popping, clearing, or releasing the arena. 
+An arena reserves a block of virtual address space and commits memory as needed. Allocations are performed by bumping a position pointer forward. Individual allocations are not freed; instead, memory is reclaimed in bulk by popping, clearing, or releasing the arena. 
 
 > [!NOTE]
 > Reservation and commit failures (e.g. out of memory) are treated as fatal and abort the program immediately — there is no recoverable error path.
@@ -43,7 +43,7 @@ Arena arena = arena_alloc(MB(64));
    By default pushes follow the arena's zeroing policy:
    - in debug builds (with ArenaFlags_AlwaysZero set) this will be zeroed
    - in release builds the memory is not zeroed unless you opt in via flags or _zero helpers */
-u32* values = arena_push_array(&arena, u32, 128)
+u32* values = arena_push_array(&arena, u32, 128);
 
 /* push a single type or struct */
 f64* x      = arena_push_t(&arena, f64);
