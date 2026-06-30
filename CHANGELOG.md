@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.10] - 2026-06-30
 
 ### Changed
 - **Breaking:** `ring_buffer_alloc` now returns a `RingBuffer` by value and **panics** (`FATAL`) on any failure path, mirroring `arena_alloc`. It was `b8 ring_buffer_alloc(RingBuffer*, u64)` returning `false` on failure. Update callers from `if (!ring_buffer_alloc(&rb, n)) {…}` to `RingBuffer rb = ring_buffer_alloc(n);`. On pre-1803 Windows (backing entry points unavailable) this now panics instead of returning `false` — gate the call if you need to degrade gracefully.
