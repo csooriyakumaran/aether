@@ -487,6 +487,13 @@ static void test_overflow_guard(void)
     void* one_more = arena_push(&arena, 1, 1, 0);
     ASSERT(one_more == 0);
 
+    /* count * sizeof(T) that wraps u64 is rejected by arena_push_array_
+       before any reservation is attempted; arena state is untouched. */
+    u64 pos2 = arena.pos;
+    u32* wrap = arena_push_array_nozero(&arena, u32, U64_MAX / 2); /* *4 wraps */
+    ASSERT(wrap == 0);
+    ASSERT(arena.pos == pos2);
+
     arena_release(&arena);
 #endif
 }
@@ -539,6 +546,28 @@ static void test_many_small_pushes(void)
     arena_release(&arena);
 }
 
+static void test_push_macro_coverage(void)
+{
+    SECTION("push macros: every typed/array variant expands and type-checks");
+
+    Arena arena = arena_alloc(KB(64));
+
+    /* one expansion of each macro so a malformed expansion (e.g. a dropped
+       comma) is a compile error, not a latent one. zeroing *behavior* is
+       covered in zero_policy; this is purely about the macros compiling. */
+    u32* a  = arena_push_t(&arena, u32);
+    u32* az = arena_push_t_zero(&arena, u32);
+    u32* an = arena_push_t_nozero(&arena, u32);
+    u32* b  = arena_push_array(&arena, u32, 4);
+    u32* bz = arena_push_array_zero(&arena, u32, 4);
+    u32* bn = arena_push_array_nozero(&arena, u32, 4);
+
+    ASSERT(a && az && an && b && bz && bn);
+    ASSERT(a != az && az != an);   /* distinct, non-overlapping bumps */
+
+    arena_release(&arena);
+}
+
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"array_count",              test_array_count},
@@ -546,6 +575,7 @@ static TestCase g_cases[] = {
     {"alloc_ex_custom",          test_alloc_ex_custom},
     {"push_alignment",           test_push_alignment},
     {"push_array_contiguous",    test_push_array_contiguous},
+    {"push_macro_coverage",      test_push_macro_coverage},
     {"zero_policy",              test_zero_policy},
     {"pop_to_and_pop",           test_pop_to_and_pop},
     {"temp_basic",               test_temp_basic},
