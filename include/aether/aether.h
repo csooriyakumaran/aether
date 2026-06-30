@@ -32,15 +32,14 @@
   - AETHER_NO_MINMAX:       skips defining MIN/MAX if not already defined
   - AETHER_NO_ASSERT:       skips defining ASSERT if not already defined
   - AETHER_NO_ARRAY_COUNT:  skips defining ARRAY_COUNT if not already defined
+  - AETHER_NO_NUMERIC_LIMITS: skips defining MIN/MAX for I8/I16/I32/I64/U8/U16/U32/U64
 
 \*---------------------------------------------------------------------------*/
 #ifndef AETHER_H_
 #define AETHER_H_
 
 #include <stdio.h>
-#include <stdbool.h>
 #include <stddef.h>
-#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -50,9 +49,9 @@ extern "C"
 /*-------- C O N F I G -------------------------------------------------------*/
 
 #if defined(_MSC_VER)
-    #define DEBUG_BREAK() __debugbreak()
+    #define AETHER_DEBUG_BREAK() __debugbreak()
 #else
-    #define DEBUG_BREAK() __builtin_trap()
+    #define AETHER_DEBUG_BREAK() __builtin_trap()
 #endif // _MSC_VER
 
 #if defined(__cplusplus)
@@ -65,6 +64,12 @@ extern "C"
     #define AETHER_LITERAL(T) T
 #else
     #define AETHER_LITERAL(T) (T)
+#endif // __cplusplus
+
+#if defined(__cplusplus)
+    #define AETHER_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
+#else
+    #define AETHER_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg) /* C11 */
 #endif // __cplusplus
 
 /*----------------------------------------------------------------------------*/
@@ -81,7 +86,7 @@ extern "C"
     #define AETHER_ASSERT_(x) do {                                                  \
         if (!(x)) {                                                                 \
             fprintf(stderr, "ASSERT FAILED: %s [%s:%d]\n", #x, __FILE__, __LINE__); \
-            DEBUG_BREAK();                                                          \
+            AETHER_DEBUG_BREAK();                                                   \
         }                                                                           \
     } while (0)
 #else
@@ -96,8 +101,52 @@ extern "C"
 
 #define FATAL(msg) do {  \
     fprintf(stderr, "FATAL ERROR: %s [%s:%d]\n", msg, __FILE__, __LINE__); \
-    DEBUG_BREAK(); \
+    AETHER_DEBUG_BREAK(); \
 } while (0)
+
+#define AETHER_I8_MIN_   (-0x7F - 1)
+#define AETHER_I8_MAX_     0x7F
+#define AETHER_U8_MAX_     0xFFu
+
+#define AETHER_I16_MIN_  (-0x7FFF - 1)
+#define AETHER_I16_MAX_    0x7FFF
+#define AETHER_U16_MAX_    0xFFFFu
+
+#define AETHER_I32_MIN_  (-0x7FFFFFFF - 1)
+#define AETHER_I32_MAX_    0x7FFFFFFF
+#define AETHER_U32_MAX_    0xFFFFFFFFu
+
+#define AETHER_I64_MIN_  (-0x7FFFFFFFFFFFFFFFll - 1)
+#define AETHER_I64_MAX_    0x7FFFFFFFFFFFFFFFll
+#define AETHER_U64_MAX_    0xFFFFFFFFFFFFFFFFull
+
+#ifndef AETHER_NO_NUMERIC_LIMITS
+    #define I8_MIN AETHER_I8_MIN_
+    #define I8_MAX AETHER_I8_MAX_
+    #define U8_MAX AETHER_U8_MAX_
+
+    #define I16_MIN AETHER_I16_MIN_
+    #define I16_MAX AETHER_I16_MAX_
+    #define U16_MAX AETHER_U16_MAX_
+
+    #define I32_MIN AETHER_I32_MIN_
+    #define I32_MAX AETHER_I32_MAX_
+    #define U32_MAX AETHER_U32_MAX_
+
+    #define I64_MIN AETHER_I64_MIN_
+    #define I64_MAX AETHER_I64_MAX_
+    #define U64_MAX AETHER_U64_MAX_
+#endif // AETHER_NO_NUMERIC_LIMITS
+
+#if !defined(__cplusplus) && (!defined(__STDC_VERSION__) || __STDC_VERSION__ < 202311L )
+    #ifndef true
+    #define true 1
+    #endif // true
+
+    #ifndef false
+    #define false 0
+    #endif // false
+#endif
 
 /* ARRAYS ONLY: decays silently on pointers */
 #define AETHER_ARRAY_COUNT_(a) (sizeof(a) / sizeof((a)[0]))
@@ -122,19 +171,21 @@ extern "C"
 
 /*-------- T Y P E S ---------------------------------------------------------*/
 
-typedef bool     b8;
-typedef int8_t   i8;
-typedef int16_t  i16;
-typedef int32_t  i32;
-typedef int64_t  i64;
+typedef signed char         i8; AETHER_STATIC_ASSERT(sizeof(i8)  == 1, "i8  != 1 byte");
+typedef signed short       i16; AETHER_STATIC_ASSERT(sizeof(i16) == 2, "i16 != 2 bytes");
+typedef signed int         i32; AETHER_STATIC_ASSERT(sizeof(i32) == 4, "i32 != 4 bytes");
+typedef signed long long   i64; AETHER_STATIC_ASSERT(sizeof(i64) == 8, "i64 != 8 bytes");
 
-typedef uint8_t  u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef uint64_t u64;
+typedef unsigned char       u8; AETHER_STATIC_ASSERT(sizeof(u8)  == 1, "u8  != 1 byte");
+typedef unsigned short     u16; AETHER_STATIC_ASSERT(sizeof(u16) == 2, "u16 != 2 bytes");
+typedef unsigned int       u32; AETHER_STATIC_ASSERT(sizeof(u32) == 4, "u32 != 4 bytes");
+typedef unsigned long long u64; AETHER_STATIC_ASSERT(sizeof(u64) == 8, "u64 != 8 bytes");
 
-typedef float    f32;
-typedef double   f64;
+typedef float              f32; AETHER_STATIC_ASSERT(sizeof(f32) == 4, "f32 != 4 bytes");
+typedef double             f64; AETHER_STATIC_ASSERT(sizeof(f64) == 8, "f64 != 8 bytes");
+
+typedef u8                  b8; AETHER_STATIC_ASSERT(sizeof(b8)  == 1, "b8  != 1 byte");
+typedef u32                b32; AETHER_STATIC_ASSERT(sizeof(b32) == 4, "b32 != 4 bytes");
 
 typedef struct bytes      {       u8* data; u64 size; } bytes;
 typedef struct bytes_view { const u8* data; u64 size; } bytes_view;
@@ -208,17 +259,23 @@ void  arena_pop_to(Arena* arena, u64 pos);
 
 void  arena_clear(Arena* arena);
 
+static inline void* arena_push_array_(Arena* arena, u64 elem_size, u64 align, u64 count, ArenaZero zero)
+{
+    if (elem_size != 0 && count > AETHER_U64_MAX_ / elem_size) { AETHER_ASSERT_(!"arena_push array overflow"); return NULL; }
+    return arena_push(arena, elem_size * count, align, zero);
+}
+
 // default arena_push will respect zeroing policy controlled by ArenaFlags
 #define arena_push_t(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), ArenaZero_FollowPolicy)
-#define arena_push_array(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), ArenaZero_FollowPolicy)
+#define arena_push_array(arena, T, n) (T*)arena_push_array_((arena), sizeof(T), ARENA_ALIGN(T), (n), ArenaZero_FollowPolicy)
 
 // explicitly force zeroing after push regardless of ArenaFlags
 #define arena_push_t_zero(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), ArenaZero_Force)
-#define arena_push_array_zero(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), ArenaZero_Force)
+#define arena_push_array_zero(arena, T, n) (T*)arena_push_array_((arena), sizeof(T), ARENA_ALIGN(T), (n), ArenaZero_Force)
 
 // explicitly force no-zeroing after push regardless of ArenaFlags
 #define arena_push_t_nozero(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), ArenaZero_Never)
-#define arena_push_array_nozero(arena, T, n) (T*)arena_push((arena), sizeof(T) * (n), ARENA_ALIGN(T), ArenaZero_Never)
+#define arena_push_array_nozero(arena, T, n) (T*)arena_push_array_((arena), sizeof(T), ARENA_ALIGN(T), (n), ArenaZero_Never)
 
 // strings on the arena
 char* arena_push_cstring(Arena* arena, const char* src);
@@ -261,14 +318,16 @@ str8_view str8_slice(str8_view s, u64 start, u64 end);
 str8_view str8_trim(str8_view s);
 b8        str8_has_prefix(str8_view s, str8_view prefix);
 b8        str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after);
-// str8_view* str8_split(Arena* arena str8_view s, str8_view delimiter, u64* out_len);
 
 // todo(chris): additional string operations (find, split, etc.)
+// str8_view* str8_split(Arena* arena str8_view s, str8_view delimiter, u64* out_len);
+// b8         str*_find(str8_view s, str8_view sub);
 
-// file i/o
+
+
+/* ------- F I L E - I / O ------------------------------------------------- */
+
 bytes arena_read_file(Arena* arena, const char* path);
-
-/* ------- M E M - M A P P I N G  ------------------------------------------ */
 
 // Read-only view into a memory mapped file
 bytes_view map_file(const char* path);
