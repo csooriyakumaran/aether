@@ -302,10 +302,7 @@ int main(void)
 
 
     RingBuffer* buffer = arena_push_t_zero(&arena, RingBuffer);
-    if(!ring_buffer_alloc(buffer, KB(64)))
-    {
-        fprintf(stderr, "Could not allocate ring buffer\n");
-    }
+    *buffer = ring_buffer_alloc(KB(64));
 
     printf("\n");
     printf("--- RING BUFFERS ----------------------\n");

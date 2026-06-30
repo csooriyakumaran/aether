@@ -298,7 +298,7 @@ typedef struct RingBuffer
     u64 write;
 } RingBuffer;
 
-b8         ring_buffer_alloc(RingBuffer* rb, u64 size);
+RingBuffer ring_buffer_alloc(u64 size);
 void       ring_buffer_release(RingBuffer* rb);
 u64        ring_buffer_available(RingBuffer* rb);
 b8         ring_buffer_read(RingBuffer* rb, void* dst, u64 len);
@@ -932,36 +932,38 @@ void arena_end_temp(ArenaTemp temp)
     arena_pop_to(temp.arena, temp.pos);
 }
 
-b8 ring_buffer_alloc(RingBuffer* rb, u64 size)
+RingBuffer ring_buffer_alloc(u64 size)
 {
-    if (!rb) return false;
-    rb->read  = 0;
-    rb->write = 0;
+    AETHER_ASSERT_(size > 0);
 
-    u64 size_pow2 = round_up_power_2(size);
+    RingBuffer rb = {0};
+
+    u64 size_pow2        = round_up_power_2(size);
     u64 page_granularity = os_mem_pagegranularity(); /* should already be power of 2 */
+    u64 ring_size        = AETHER_MAX_(size_pow2, page_granularity);
 
-    u64 ring_size = AETHER_MAX_(size_pow2, page_granularity);
+    rb.base = (u8*)os_mem_reserve_ring(ring_size);
+    if (!rb.base) FATAL("Failed to allocated RingBuffer\n");
 
-    rb->base = (u8*)os_mem_reserve_ring(ring_size);
-    if (!rb->base) return false;
-
-    rb->size = ring_size;
-    if (!os_mem_split_ring(rb->base, rb->size))
+    if (!os_mem_split_ring(rb.base, ring_size))
     {
-        os_mem_release(rb->base, rb->size);
-        return false;
-    }
-
-    u8* base = (u8*)os_mem_map_ring(rb->base, rb->size);
-    if (!base || rb->base != base)
-    {
-        os_mem_release_ring(rb->base, rb->size);
-        return false;
+        os_mem_release(rb.base, ring_size);
+        FATAL("Failed to split RingBuffer\n");
 
     }
 
-    return true;
+    u8* base = (u8*)os_mem_map_ring(rb.base, ring_size);
+    if (!base || rb.base != base)
+    {
+        os_mem_release_ring(rb.base, ring_size);
+        FATAL("Failed to double-map RingBuffer\n");
+    }
+
+    rb.size  = ring_size;
+    rb.read  = 0;
+    rb.write = 0;
+
+    return rb;
 }
 
 u64 ring_buffer_available(RingBuffer* rb)

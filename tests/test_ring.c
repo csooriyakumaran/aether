@@ -49,8 +49,7 @@ static void test_mirror(void)
 {
     SECTION("ring: upper half mirrors lower half (shared physical pages)");
 
-    RingBuffer rb = {0};
-    ASSERT(ring_buffer_alloc(&rb, KB(4)));
+    RingBuffer rb = ring_buffer_alloc(KB(4));
     ASSERT(rb.base != NULL);
 
     rb.base[0] = 0xAB;
@@ -69,8 +68,7 @@ static void test_alloc(void)
     u64 gran = os_mem_pagegranularity();
 
     /* a tiny request rounds up to the allocation granularity (64 KiB) */
-    RingBuffer small = {0};
-    ASSERT(ring_buffer_alloc(&small, 100));
+    RingBuffer small = ring_buffer_alloc(100);
     ASSERT(small.size == gran);
     ASSERT(is_power_of_two(small.size));
     ASSERT(small.size >= gran);
@@ -81,8 +79,7 @@ static void test_alloc(void)
     ASSERT(small.size == 0 && small.read == 0 && small.write == 0);
 
     /* a request above granularity rounds to the next power of two */
-    RingBuffer big = {0};
-    ASSERT(ring_buffer_alloc(&big, MB(1)));
+    RingBuffer big = ring_buffer_alloc(MB(1));
     ASSERT(big.size == MB(1));                 /* MB(1) is already a power of two */
     ASSERT(is_power_of_two(big.size));
     ring_buffer_release(&big);
@@ -92,8 +89,7 @@ static void test_roundtrip(void)
 {
     SECTION("ring: basic write/read round-trip preserves bytes and advances counters");
 
-    RingBuffer rb = {0};
-    ASSERT(ring_buffer_alloc(&rb, KB(4)));
+    RingBuffer rb = ring_buffer_alloc(KB(4));
 
     u8 src[256], dst[256];
     for (u32 i = 0; i < 256; ++i) src[i] = (u8)i;
@@ -115,8 +111,7 @@ static void test_seam(void)
 {
     SECTION("ring: write/peek/read straddling the wrap stay contiguous");
 
-    RingBuffer rb = {0};
-    ASSERT(ring_buffer_alloc(&rb, KB(4)));
+    RingBuffer rb = ring_buffer_alloc(KB(4));
 
     u64 k = 8;
     rb.read = rb.write = rb.size - k;          /* empty; write_idx = size - k */
@@ -141,8 +136,7 @@ static void test_peek_no_consume(void)
 {
     SECTION("ring: peek is idempotent and does not advance read");
 
-    RingBuffer rb = {0};
-    ASSERT(ring_buffer_alloc(&rb, KB(4)));
+    RingBuffer rb = ring_buffer_alloc(KB(4));
 
     u8 src[64];
     for (u32 i = 0; i < 64; ++i) src[i] = (u8)(i * 3);
@@ -168,8 +162,7 @@ static void test_guards(void)
 {
     SECTION("ring: read/write/peek reject out-of-bounds requests without mutating state");
 
-    RingBuffer rb = {0};
-    ASSERT(ring_buffer_alloc(&rb, KB(4)));
+    RingBuffer rb = ring_buffer_alloc(KB(4));
 
     u8 buf[64] = {0};
 
@@ -202,8 +195,7 @@ static void test_available_advance(void)
 {
     SECTION("ring: available tracks write-read; advance_read consumes without copying");
 
-    RingBuffer rb = {0};
-    ASSERT(ring_buffer_alloc(&rb, KB(4)));
+    RingBuffer rb = ring_buffer_alloc(KB(4));
 
     ASSERT(ring_buffer_available(&rb) == 0);         /* empty */
 
@@ -248,8 +240,7 @@ static void test_stream(void)
 {
     SECTION("ring: streaming many wraps with non-dividing chunks preserves byte order");
 
-    RingBuffer rb = {0};
-    ASSERT(ring_buffer_alloc(&rb, KB(4)));
+    RingBuffer rb = ring_buffer_alloc(KB(4));
 
     u64 total    = (u64)rb.size * 10 + 123;    /* many wraps, deliberately unaligned */
     u64 produced = 0, consumed = 0;
@@ -290,8 +281,7 @@ static void test_counter_wrap(void)
 {
     SECTION("ring: read/write counters survive u64 overflow");
 
-    RingBuffer rb = {0};
-    ASSERT(ring_buffer_alloc(&rb, KB(4)));
+    RingBuffer rb = ring_buffer_alloc(KB(4));
 
     rb.read = rb.write = (u64)-20;             /* 20 short of 2^64 */
 

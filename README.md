@@ -342,7 +342,7 @@ AETHER provides a fixed-capacity **ring (circular) buffer** for byte streams —
 It uses the *virtually-mirrored* (a.k.a. "magic") layout: the buffer reserves twice its capacity of address space and maps the **same physical pages** into both halves. A read or write that crosses the end of the buffer therefore wraps automatically, so any span up to the full capacity is always a **single `memcpy`** and `ring_buffer_peek` can hand back **one contiguous view even when the data straddles the seam** — no split-at-the-boundary bookkeeping.
 
 > [!NOTE]
-> Ring buffers are currently Windows-only and require Windows 10 version 1803 or newer (`VirtualAlloc2` / `MapViewOfFile3`). These are resolved at runtime, so there is **no extra link dependency** — on an older OS `ring_buffer_alloc` simply returns `false`. Always check its return value.
+> Ring buffers are currently Windows-only and require Windows 10 version 1803 or newer (`VirtualAlloc2` / `MapViewOfFile3`). These are resolved at runtime, so there is **no extra link dependency** — but on an older OS the entry points are unavailable and `ring_buffer_alloc` **panics** (`FATAL`) like any other allocation failure. Gate the call yourself if you need to degrade gracefully on those platforms.
 
 The requested capacity is rounded up to a power of two that is at least the OS allocation granularity (64 KiB on Windows). This keeps index wrapping a cheap mask and satisfies the placeholder-mapping alignment rules.
 
@@ -361,7 +361,7 @@ The requested capacity is rounded up to a power of two that is at least the OS a
 
 | FUNCTION              | DESCRIPTION                                                                                  |
 | --------------------- | -------------------------------------------------------------------------------------------- |
-| `ring_buffer_alloc`        | Reserve + map the mirrored region. Returns `false` on failure (incl. pre-1803 Windows).      |
+| `ring_buffer_alloc`        | Reserve + map the mirrored region and return the `RingBuffer` by value. **Panics** (`FATAL`) on any failure (incl. pre-1803 Windows). |
 | `ring_buffer_available`    | Bytes currently ready to read (`write - read`).                                              |
 | `ring_buffer_write`        | Copy `len` bytes in. Rejects (returns `false`) if `len` exceeds free space or total capacity. |
 | `ring_buffer_peek`         | Return a contiguous `bytes_view` of `len` bytes **without** consuming. `{0}` if `len` unavailable. |
@@ -370,12 +370,8 @@ The requested capacity is rounded up to a power of two that is at least the OS a
 | `ring_buffer_release`      | Unmap both views, free the reservation, and zero the struct.                                 |
 
 ```c
-RingBuffer rb = {0};
-if (!ring_buffer_alloc(&rb, KB(64)))   /* rounded up to a power of two >= 64 KiB */
-{
-    /* unavailable (e.g. Windows < 1803) — fall back or bail */
-    return;
-}
+/* rounded up to a power of two >= 64 KiB; panics on failure */
+RingBuffer rb = ring_buffer_alloc(KB(64));
 
 /* producer: write the whole span or nothing.
    returns false if there isn't room — apply backpressure or drop */
