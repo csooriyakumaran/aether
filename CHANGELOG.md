@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `HighResTimer` with `high_res_timer_create`, `high_res_timer_wait`, and `high_res_timer_release` for fixed-rate loop pacing. Create with a specified rate (`f64` `hz`). 
+
 ## [0.0.10] - 2026-06-30
 
 ### Changed
