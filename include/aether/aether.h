@@ -337,6 +337,19 @@ void       unmap_file(bytes_view map);
 u64 time_mark(void);
 f64 time_elapsed_sec(u64 start, u64 end);
 
+typedef struct HighResTimer
+{
+    u64 period_ticks;
+    u64 next_deadline;
+    u64 overrun;
+    u64 spin_margin;
+    void* os_timer;
+} HighResTimer;
+
+HighResTimer high_res_timer_create(f64 hz);
+u64          high_res_timer_wait(HighResTimer* t);
+void         high_res_timer_release(HighResTimer* t);
+
 #ifdef __cplusplus
 }
 #endif // __cplusplus
@@ -377,6 +390,10 @@ f64 time_elapsed_sec(u64 start, u64 end);
     #ifndef MEM_PRESERVE_PLACEHOLDER
     #define MEM_PRESERVE_PLACEHOLDER 0x00000002
     #endif // MEM_PRESERVE_PLACEHOLDER
+
+    #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+    #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+    #endif // CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 
 #endif // _WIN32
 
@@ -638,6 +655,54 @@ static u64 os_time_frequency(void)
     return (u64)freq.QuadPart;
 #else
     #error "AETHER: OS time frequency not implemented for this platform"
+#endif
+}
+
+static void* os_create_timer(void)
+{
+#ifdef _WIN32
+    HANDLE h = CreateWaitableTimerExW(
+        NULL,
+        NULL,
+        CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+        TIMER_ALL_ACCESS
+    );
+    if (!h) return NULL;
+    return (void*)h;
+#else
+    #error "AETHER: OS timer not implemented for this platform"
+#endif
+}
+
+static void os_timer_sleep(void* h, u64 sleep_ticks)
+{
+#ifdef _WIN32
+
+    LARGE_INTEGER due;
+    due.QuadPart = -(LONGLONG)(sleep_ticks * 10000000ull / os_time_frequency());
+    if (!SetWaitableTimer((HANDLE)h, &due, 0, NULL, NULL, FALSE)) return;
+    WaitForSingleObject(h, INFINITE);
+    return;
+#else
+    #error "AETHER: OS set timer not implemented for this platform"
+#endif
+}
+
+static void os_timer_release(void* h)
+{
+#ifdef _WIN32
+    CloseHandle(h);
+#else
+    #error "AETHER: OS release timer not implemented for this platform"
+#endif
+}
+
+static void os_cpu_relax(void)
+{
+#ifdef _WIN32
+    YieldProcessor();
+#else
+    #error "AETHER: OS cpu relax not implemented for this platform"
 #endif
 }
 
@@ -1199,6 +1264,66 @@ str8_view str8_trim(str8_view s)
     return str8_slice(s, start, end);
 }
 
+HighResTimer high_res_timer_create(f64 hz)
+{
+    AETHER_ASSERT_(hz > 0);
+
+    HighResTimer t = {0};
+
+    u64 freq         = os_time_frequency();
+    u64 period_ticks = (u64)((f64)freq / hz + 0.5);
+    u64 now          = os_time_now();
+    void* os_timer   = os_create_timer();
+
+    if (!os_timer)
+    {
+        FATAL("Failed to create platform timer");
+        return t;
+    }
+
+    t.period_ticks  = period_ticks;
+    t.os_timer      = os_timer;
+    t.next_deadline = now;
+    t.spin_margin   = freq / 1000;
+
+    return t;
+}
+
+u64 high_res_timer_wait(HighResTimer* t)
+{
+
+    if (!t->os_timer) return 0;
+
+    u64 now = os_time_now();
+    t->next_deadline += t->period_ticks;
+
+    if (t->next_deadline <= now)
+    {
+        u64 misses = 1 + (now - t->next_deadline) / t->period_ticks;
+        t->overrun += misses;
+        t->next_deadline = now;
+        return misses;
+    }
+
+    if (t-> next_deadline > now + t->spin_margin)
+        os_timer_sleep(t->os_timer, t->next_deadline - now - t->spin_margin);
+
+    while (os_time_now() < t->next_deadline)
+        os_cpu_relax();
+
+    return 0;
+}
+
+void high_res_timer_release(HighResTimer* t)
+{
+    if (!t || !t->os_timer) return;
+    os_timer_release(t->os_timer);
+    t->os_timer      = NULL;
+    t->period_ticks  = 0;
+    t->next_deadline = 0;
+    t->overrun       = 0;
+    return;
+}
 
 #ifdef __cplusplus
 }
