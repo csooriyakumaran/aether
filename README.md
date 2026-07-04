@@ -34,44 +34,46 @@ An arena reserves a block of virtual address space and commits memory as needed.
 ```c
 /* reserve 64 MB of virtual address space.
    The simple arena_alloc() API chooses sensible defaults based on build configuration:
-   - release: lazy commit (initial commit = 0), no zeroing, no decommit by default
-   - debug:  lazy commit, with ArenaFlags_AlwaysZero, ArenaFlags_DebugFillOnClear,
-             and ArenaFlags_Decommit enabled */
-Arena arena = arena_alloc(MB(64));
+   - release: initial commit = one page (the header must be backed), no zeroing, no decommit
+   - debug:   same initial commit, with ArenaFlags_AlwaysZero, ArenaFlags_DebugFillOnClear,
+              and ArenaFlags_Decommit enabled */
+Arena* arena = arena_alloc(MB(64));
 
 /* push an array of 128 u32 values.
    By default pushes follow the arena's zeroing policy:
    - in debug builds (with ArenaFlags_AlwaysZero set) this will be zeroed
    - in release builds the memory is not zeroed unless you opt in via flags or _zero helpers */
-u32* values = arena_push_array(&arena, u32, 128);
+u32* values = arena_push_array(arena, u32, 128);
 
 /* push a single type or struct */
-f64* x      = arena_push_t(&arena, f64);
+f64* x      = arena_push_t(arena, f64);
 
-/* Clear the arena, resetting the position pointer to 0
+/* Clear the arena, resetting the position to the header floor
    Memory is still reserved
    Memory is still committed unless ArenaFlags_Decommit is set*/
-arena_clear(&arena);
+arena_clear(arena);
 
-/* release the memory back to the OS */
-arena_release(&arena);
+/* release the memory back to the OS.
+   arena now dangles -- the header lived inside the freed reservation */
+arena_release(arena);
 
 ```
 
 ### Arena Layout
 
+The arena is **self-hosted**: `arena_alloc` reserves the region, stores the `Arena` header in the first `AETHER_ARENA_HEADER_SIZE` (128) bytes of its own reservation, and returns a pointer to it. There is exactly one control block per arena, living inside the memory it manages — an arena cannot be accidentally copied into two diverging views, and `arena_release` returns the header to the OS together with everything else. After `arena_release` the pointer is dangling and must not be touched (same convention as `free`; assign `NULL` yourself if you keep the handle around).
+
 An arena tracks:
 
 | FIELD         | DESCRIPTION                                                         |
 | -----         | ------------------------------------------------------------------- |
-| base          | Base pointer to the reserved memory region                          |
 | reserved_size | Total virtual memory reserved for the arena                         |
 | commit_size   | Amount of memory currently commited and accessible                  |
-| pos           | Current allocation position in bytes from `base`                    |
+| pos           | Current allocation position in bytes from the arena base            |
 | granularity   | Commit page granularity (number of pages per check when configured) |
 | flags         | 8-bit flag for controlling arena behaviour                          |
 
-Allocation occur from `base + pos`. The position is advanced after each push.
+Allocations are handed out at `(u8*)arena + pos`. `pos` starts at the 128-byte header floor (so the first allocation is cache-line aligned) and never drops below it — `arena_clear`, `arena_pop`, and `arena_pop_to` all clamp there, so user allocations can never overwrite the header.
 
 ### Arena Flags
 
@@ -90,9 +92,9 @@ Allocation occur from `base + pos`. The position is advanced after each push.
 
 ```c
 /* reserve 64 MB */
-Arena arena = arena_alloc(MB(64));
+Arena* arena = arena_alloc(MB(64));
 
-arena.flags =
+arena->flags =
     ArenaFlags_Decommit |         /* when popping/clearing, decommit unused pages */
     ArenaFlags_DebugFillOnClear;  /* when popping/clearing, fill any remaining committed memory with 0xDD */
 ```
@@ -102,7 +104,7 @@ arena.flags =
 For finer control:
 
 ```c
-u64 initial_commit_size = KB(4);  /* initially commit 4 KB of memory */
+u64 initial_commit_size = KB(4);  /* initially commit 4 KB of memory (values below one page round up to a page) */
 u32 commit_page_granularity = 64; /* every time we need to commit more memory, commit in chunks of 64 pages */
 ArenaFlags flags = 
     ArenaFlags_Decommit |         /* when popping/clearing, decommit unused pages */
@@ -110,7 +112,7 @@ ArenaFlags flags =
     ArenaFlags_DebugFillOnClear;  /* when popping/clearing, fill any remaining committed memory with 0xDD */
 
 /* reserve 64 MB,  */
-Arena arena = arena_alloc_ex(MB(64), initial_commit_size, commit_page_granularity, flags);
+Arena* arena = arena_alloc_ex(MB(64), initial_commit_size, commit_page_granularity, flags);
 ```
 
 ### Allocation
@@ -122,7 +124,7 @@ Use `arena_push` for explicit control:
 void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero);
 
 /* push to arena `size` bytes, padded to `alignment`, and explicitly zero the memory */
-void* memory = arena_push(&arena, size, alignment, ArenaZero_Force);
+void* memory = arena_push(arena, size, alignment, ArenaZero_Force);
 ```
 
  Convenience macros are provided for common typed and array allocations. Default alignment is an 8-byte boundary. The `zero` argument is an `ArenaZero`, not a plain bool:
@@ -132,20 +134,20 @@ void* memory = arena_push(&arena, size, alignment, ArenaZero_Force);
 
 ```c
 /* push one u32 onto the arena */
-u32* one   = arena_push_t(&arena, u32);
+u32* one   = arena_push_t(arena, u32);
 /* push and array of f64 onto the arena, with space for 1024 elements */
-f64* array = arena_push_array(&arena, f64, 1024);
+f64* array = arena_push_array(arena, f64, 1024);
 ```
 
 ```c
 /* explicitly request zeroing for this allocation, regardless of arena flags */
-u32* one_zeroed   = arena_push_t_zero(&arena, u32);
-f64* array_zeroed = arena_push_array_zero(&arena, f64, 1024);
+u32* one_zeroed   = arena_push_t_zero(arena, u32);
+f64* array_zeroed = arena_push_array_zero(arena, f64, 1024);
 ```
 
 ```c
 /* explicitly skip zeroing for this allocation, even if ArenaFlags_AlwaysZero is set */
-u8* bytes = arena_push_array_nozero(&arena, u8, 256);
+u8* bytes = arena_push_array_nozero(arena, u8, 256);
 ```
 
 > [!NOTE] 
@@ -157,15 +159,15 @@ AETHER arenas are designed for bulk lifetime management:
 
 ```c
 /* save the position for later */
-u64 mark = arena.pos;
+u64 mark = arena->pos;
 
-TemporaryThing *tmp = arena_push_t(&arena, TemporaryThing);
+TemporaryThing *tmp = arena_push_t(arena, TemporaryThing);
 
 /*--------------------------------------------------------*/
 /* use temporary allocations */
 /*--------------------------------------------------------*/
 
-arena_pop_to(&arena, mark);
+arena_pop_to(arena, mark);
 ```
 
 ***Common Patterns***
@@ -183,18 +185,18 @@ A common pattern is to use a scratch arena for temporary data that only needs to
 > `arena_alloc(MB(64))` reserves 64 MB of virtual address space. Initial commit, zeroing, and decommit behavior follow the build-configuration defaults described above.
 
 ```c
-Arena scratch = arena_alloc(MB(64));
+Arena* scratch = arena_alloc(MB(64));
 
 /*--------------------------------------------------------*/
 /* Other allocations/deallocations on scratch             */
 /*--------------------------------------------------------*/
 
-ArenaTemp tmp = arena_begin_temp(&scratch);
+ArenaTemp tmp = arena_begin_temp(scratch);
 
 /* Read the whole file into the arena. On a missing or
    unreadable file the result is {0} and the arena is left
    untouched, so the caller can recover. */
-bytes file = arena_read_file(&scratch, "input.dat");
+bytes file = arena_read_file(scratch, "input.dat");
 
 /*--------------------------------------------------------*/
 /* Process file contents                                  */
@@ -221,7 +223,7 @@ arena_end_temp(tmp);   /* file bytes reclaimed with everything else */
 /* continue to re-use scratch arena for other temp work   */
 /*--------------------------------------------------------*/
 
-arena_release(&scratch);
+arena_release(scratch);
 ```
 
 No individual deallocation is required. The file bytes live in the arena, so once processing is complete the entire working set is discarded together by ending the `ArenaTemp` (or with `arena_pop_to` / `arena_clear`).
@@ -294,7 +296,7 @@ Each call to `eval_rhs` reuses the same bytes for `flux`, four times per step, w
 void string_example(void)
 {
     /* Reserve 64 MB; debug vs release behavior follows arena_alloc defaults. */
-    Arena arena = arena_alloc(MB(64));
+    Arena* arena = arena_alloc(MB(64));
 
     /*----------------------------------------------*/
     /* Basic arena-backed strings                   */
@@ -302,7 +304,7 @@ void string_example(void)
 
     /* Literal to str8_view then copy into the arena */
     str8_view src = STR("hello, world");
-    str8      s   = arena_push_str8_copy(&arena, src);
+    str8      s   = arena_push_str8_copy(arena, src);
 
     /* Print using STR8_FMT / STR8_ARG */
     printf("s = " STR8_FMT "\n", STR8_ARG(s));
@@ -313,7 +315,7 @@ void string_example(void)
 
     /* Create a formatted str8 backed by the arena */
     str8 message = arena_push_str8_fmt(
-        &arena,
+        arena,
         "name= " STR8_FMT ", value=%d",
         STR8_ARG(s),
         42
@@ -322,7 +324,7 @@ void string_example(void)
     printf("message = " STR8_FMT "\n", STR8_ARG(message));
 
     /* Create a formatted null-terminated C string on the arena */
-    char* line = arena_push_cstring_fmt(&arena, "count = %d", 123);
+    char* line = arena_push_cstring_fmt(arena, "count = %d", 123);
     printf("line = %s\n", line);
 
     /*----------------------------------------------*/
@@ -330,8 +332,8 @@ void string_example(void)
     /*----------------------------------------------*/
 
     /* When done with these strings, clear or pop the arena */
-    arena_clear(&arena);   /* or arena_pop_to(&arena, mark) if you saved a mark */
-    arena_release(&arena); /* release the reserved region back to the OS */
+    arena_clear(arena);   /* or arena_pop_to(arena, mark) if you saved a mark */
+    arena_release(arena); /* release the reserved region back to the OS */
 }
 ```
 
