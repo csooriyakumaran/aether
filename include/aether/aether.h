@@ -218,6 +218,8 @@ static  inline str8_view  view_from_str8(str8 s)   { str8_view  v = {s.data, s.s
 
 /*-------- A R E N A S -------------------------------------------------------*/
 
+#define AETHER_ARENA_HEADER_SIZE 128
+
 // todo(chris): ArenaFlags may need to grow to u16 or u32 if other options are added
 typedef u8 ArenaFlags;
 enum ArenaFlags_ {
@@ -235,7 +237,6 @@ typedef enum ArenaZero {
 } ArenaZero;
 
 typedef struct Arena {
-    u8* base;
     u64 reserved_size;
     u64 commit_size;
     u64 pos;
@@ -244,18 +245,20 @@ typedef struct Arena {
     ArenaFlags flags;
 } Arena;
 
+AETHER_STATIC_ASSERT(sizeof(Arena) <= AETHER_ARENA_HEADER_SIZE, "Arena header exceeds reserved header size");
+
 typedef struct ArenaTemp {
     Arena* arena;
     u64 pos;
 } ArenaTemp;
 
-Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags);
-Arena arena_alloc(u64 reserve_size);
-void  arena_release(Arena* arena);
+Arena* arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags);
+Arena* arena_alloc(u64 reserve_size);
+void   arena_release(Arena* arena);
 
-void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero);
-void  arena_pop(Arena* arena, u64 amt);
-void  arena_pop_to(Arena* arena, u64 pos);
+void*  arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero);
+void   arena_pop(Arena* arena, u64 amt);
+void   arena_pop_to(Arena* arena, u64 pos);
 
 void  arena_clear(Arena* arena);
 
@@ -746,7 +749,7 @@ static void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
 
     new_commit_size = AETHER_MIN_(new_commit_size, arena->reserved_size);
 
-    b8 committed = os_mem_commit(arena->base + arena->commit_size, new_commit_size - arena->commit_size);
+    b8 committed = os_mem_commit((u8*)arena + arena->commit_size, new_commit_size - arena->commit_size);
     if (!committed) FATAL("Memory commit failed");
 
     arena->commit_size = new_commit_size;
@@ -769,18 +772,16 @@ static void arena_decommit_tail(Arena* arena, u64 new_pos)
 
     if (decommit_size > 0)
     {
-        os_mem_decommit(arena->base + new_commit_size, decommit_size);
+        os_mem_decommit((u8*)arena + new_commit_size, decommit_size);
         arena->commit_size = new_commit_size;
     }
 
     return;
 }
 
-Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags)
+Arena* arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags)
 {
     AETHER_ASSERT_(reserve_size > 0);
-
-    Arena arena = {0};
 
     u64 pagesize = os_mem_pagesize();
 
@@ -790,37 +791,36 @@ Arena arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_
     if (initial_commit_size > reserve_size)
         initial_commit_size = reserve_size;
 
-    arena.base   = (u8*)os_mem_reserve(reserve_size);
-    if (!arena.base) FATAL("Failed to reserve memory");
+    if (initial_commit_size < pagesize)
+        initial_commit_size = pagesize;
 
-    if (initial_commit_size > 0)
-    {
-        b8 committed = os_mem_commit(arena.base, initial_commit_size);
-        if (!committed) FATAL("Failed to commit memory");
-    }
+    u8* base = (u8*)os_mem_reserve(reserve_size);
+    if (!base) FATAL("Failed to reserve memory");
+    if (!os_mem_commit(base, initial_commit_size)) FATAL("Failed to commit memory");
 
-    arena.reserved_size = reserve_size;
-    arena.commit_size   = initial_commit_size;
-    arena.pos           = 0;
-    arena.flags         = flags;
-    arena.granularity   = commit_page_granularity;
+    Arena* arena         = (Arena*)base;
+    arena->reserved_size = reserve_size;
+    arena->commit_size   = initial_commit_size;
+    arena->pos           = AETHER_ARENA_HEADER_SIZE;
+    arena->flags         = flags;
+    arena->granularity   = commit_page_granularity;
 
     return arena;
 
 }
 
-Arena arena_alloc(u64 reserve_size)
+Arena* arena_alloc(u64 reserve_size)
 {
 #if AETHER_ENABLE_ASSERTS
     // Debug defaults
-    u64        initial_commit = 0;
+    u64        initial_commit = AETHER_ARENA_HEADER_SIZE;
     ArenaFlags flags          = ArenaFlags_AlwaysZero |
                                 ArenaFlags_DebugFillOnClear |
                                 ArenaFlags_Decommit;
     u32 granularity           = 1; /* commit and decommit single-page units */
 #else
     // Performance defaults
-    u64        initial_commit = 0;
+    u64        initial_commit = AETHER_ARENA_HEADER_SIZE;
     ArenaFlags flags          = ArenaFlags_None;
     u32        granularity    = 1;
 #endif
@@ -829,13 +829,8 @@ Arena arena_alloc(u64 reserve_size)
 
 void arena_release(Arena* arena)
 {
-    if (arena->base)
-        os_mem_release(arena->base, arena->reserved_size);
-
-    arena->base          = 0;
-    arena->reserved_size = 0;
-    arena->commit_size   = 0;
-    arena->pos           = 0;
+    if (!arena) return;
+    os_mem_release(arena, arena->reserved_size);
 }
 
 void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
@@ -859,7 +854,7 @@ void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
         arena_commit_page_or_chunk(arena, new_pos);
 
     arena->pos = new_pos;
-    void* result = arena->base + aligned_pos;
+    void* result = (u8*)arena + aligned_pos;
 
     // ways to get zeroed mem: 1. forced, 2. policy and not never
     if ( (zero == ArenaZero_Force) || ( (zero == ArenaZero_FollowPolicy) && (arena->flags & ArenaFlags_AlwaysZero) != 0 ))
@@ -870,11 +865,11 @@ void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
 
 void arena_pop_to(Arena* arena, u64 pos)
 {
-    if (pos > arena->pos)
-        pos = arena->pos;
+    if (pos < AETHER_ARENA_HEADER_SIZE) pos = AETHER_ARENA_HEADER_SIZE;
+    if (pos > arena->pos)               pos = arena->pos;
 
     if ((arena->flags & ArenaFlags_DebugFillOnClear) != 0)
-        memset(arena->base + pos, 0xDD, arena->pos - pos);
+        memset((u8*)arena + pos, 0xDD, arena->pos - pos);
 
     if ((arena->flags & ArenaFlags_Decommit) != 0)
         arena_decommit_tail(arena, pos);
@@ -893,7 +888,7 @@ void arena_pop(Arena* arena, u64 amt)
 
 void arena_clear(Arena* arena)
 {
-    arena_pop_to(arena, 0);
+    arena_pop_to(arena, AETHER_ARENA_HEADER_SIZE);
 }
 
 char* arena_push_cstring(Arena* arena, const char* src)
