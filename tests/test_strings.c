@@ -124,9 +124,9 @@ static void test_views(void)
 {
     SECTION("view_from_str8 / view_from_bytes: borrow without copying");
 
-    Arena arena = arena_alloc(KB(4));
+    Arena* arena = arena_alloc(KB(4));
 
-    str8 owned = arena_push_str8_copy(&arena, STR("borrowed"));
+    str8 owned = arena_push_str8_copy(arena, STR("borrowed"));
     str8_view view = view_from_str8(owned);
     ASSERT(view.data == owned.data);
     ASSERT(view.size == owned.size);
@@ -136,29 +136,29 @@ static void test_views(void)
     ASSERT(bv.data == b.data);
     ASSERT(bv.size == b.size);
 
-    arena_release(&arena);
+    arena_release(arena);
 }
 
 static void test_c_str(void)
 {
     SECTION("c_str: str8_view -> null-terminated, arena-allocated C string");
 
-    Arena arena = arena_alloc(KB(4));
+    Arena* arena = arena_alloc(KB(4));
 
-    char* h = c_str(&arena, STR("hello"));
+    char* h = c_str(arena, STR("hello"));
     ASSERT(strcmp(h, "hello") == 0);
 
-    str8 copy = arena_push_str8_copy(&arena, STR("world"));
-    char* w = c_str(&arena, view_from_str8(copy));
+    str8 copy = arena_push_str8_copy(arena, STR("world"));
+    char* w = c_str(arena, view_from_str8(copy));
     ASSERT(strcmp(w, "world") == 0);
 
-    char* e = c_str(&arena, STR(""));
+    char* e = c_str(arena, STR(""));
     ASSERT(strcmp(e, "") == 0);
 
-    char* z = c_str(&arena, (str8_view){0}); /* NULL data, zero size */
+    char* z = c_str(arena, (str8_view){0}); /* NULL data, zero size */
     ASSERT(strcmp(z, "") == 0);
 
-    arena_release(&arena);
+    arena_release(arena);
 }
 
 typedef struct { const char* name; void (*fn)(void); } TestCase;
