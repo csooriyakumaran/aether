@@ -4,13 +4,13 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.11] - 2026-07-03
 
 ### Added
 - `HighResTimer`: fixed-rate loop pacing via `high_res_timer_create`/`_wait`/`_release`.
 
 ### Changed
-- **Breaking**: Arenas header now self hosted at the base of the reservation, and `arena_alloc` now returns a pointer. i.e., (```Arena a = arena_alloc(n);``` -> ```Arena* a = arena_alloc(n);```)
+- **Breaking**: Arenas header now self hosted at the base of the reservation, and `arena_alloc` now returns a pointer. i.e., (```Arena a = arena_alloc(n);``` -> ```Arena* a = arena_alloc(n);```). `arena_release` no longer zeros arena struct and leaves a dangling pointer (similar to `free`).
 
 ## [0.0.10] - 2026-06-30
 
