@@ -85,26 +85,27 @@ static void print_ring_buffer(RingBuffer* rb)
 
 static void arena_hexdump(Arena* arena)
 {
-    if (!arena->base) return;
+    if (!arena) return;
 
     u64 n = arena->pos;
 
 
     printf("------  ARENA ------------------------------\n");
-    printf("       Base Address :     0x%016llX\n",    (unsigned long long)(uintptr_t)arena->base);
+    printf("       Base Address :     0x%016llX\n",    (unsigned long long)(uintptr_t)arena);
     printf("    Reserved Memory : %16llu bytes (%.2f MB)\n", (unsigned long long)arena->reserved_size, (f64)arena->reserved_size / MB(1));
     printf("   Committed Memory : %16llu bytes (%.2f KB)\n", (unsigned long long)arena->commit_size, (f64)arena->commit_size / KB(1));
     printf("           Position : %16llu bytes\n", (unsigned long long)arena->pos);
     printf("              Flags :             "); print_binary_u8(arena->flags); printf("\n");
     printf(" Commit Granularity : %16u pages\n", arena->granularity);
     printf("--------------------------------------------\n");
-    printf("sizeof(Arena) : %16llu bytes\n", sizeof(Arena));
+    printf("      sizeof(Arena) : %16llu bytes\n", sizeof(Arena));
     printf("============================================\n");
 
     printf("\n");
     printf(" OFFSET    BYTES                                             ASCII\n");
     printf("--------  ------------------------------------------------  ------------------\n");
 
+    u8* base = (u8*)arena;
     for (u64 offset = 0; offset < n; offset += DUMP_BYTES_PER_ROW)
     {
         if (offset > 0 && (offset % PAGESIZE) == 0)
@@ -122,7 +123,7 @@ static void arena_hexdump(Arena* arena)
         {
             if (offset + i < n)
             {
-              printf("%02x ", arena->base[offset+i]);
+              printf("%02x ", base[offset+i]);
             }
             else
             {
@@ -140,7 +141,7 @@ static void arena_hexdump(Arena* arena)
         {
             if (offset + i < n)
             {
-                u8 c = arena->base[offset + i];
+                u8 c = base[offset + i];
                 printf("%c", (c >= 32 && c <= 126) ? c : '.');
             }
             else
@@ -224,23 +225,23 @@ int main(void)
     printf("\n");
     printf("--- Alloc : reserve MB(4)");
     printf("\n");
-    Arena arena = arena_alloc(MB(4));
-    arena_hexdump(&arena);
+    Arena* arena = arena_alloc(MB(4));
+    arena_hexdump(arena);
 
-    u32* a = arena_push_t(&arena, u32);
+    u32* a = arena_push_t(arena, u32);
     *a = 0x12345678;
 
     /* no-zero terminiation */
-    str8 hello = arena_push_str8_copy(&arena, STR("hello") );
+    str8 hello = arena_push_str8_copy(arena, STR("hello") );
     /* with terminiation */
-    const char* world = arena_push_cstring(&arena, ", world!");
+    const char* world = arena_push_cstring(arena, ", world!");
 
-    str8 fmt_str8 = arena_push_str8_fmt(&arena, "fmt %s %d", "str8: a = ", *a);
-    const char* fmt_char = arena_push_cstring_fmt(&arena, "fmt %s %d", "char*: a = ", *a);
+    str8 fmt_str8 = arena_push_str8_fmt(arena, "fmt %s %d", "str8: a = ", *a);
+    const char* fmt_char = arena_push_cstring_fmt(arena, "fmt %s %d", "char*: a = ", *a);
 
-    u64 mark1 = arena.pos;
+    u64 mark1 = arena->pos;
 
-    u64* data = arena_push_array(&arena, u64, 10);
+    u64* data = arena_push_array(arena, u64, 10);
     for (u64 i = 0; i < 10; ++i)
         data[i] = i;
 
@@ -250,8 +251,8 @@ int main(void)
         f64 y;
     } test_vec2;
 
-    test_vec2* vecs = arena_push_array(&arena, test_vec2, 10);
-    u64 mark2 = arena.pos;
+    test_vec2* vecs = arena_push_array(arena, test_vec2, 10);
+    u64 mark2 = arena->pos;
 
     printf("\n");
     printf("--- Push : u32      -> 0x12345678\n");
@@ -265,43 +266,44 @@ int main(void)
     printf("   mark2 : save position (%llu)\n", mark2);
     printf("\n");
 
-    arena_hexdump(&arena);
+    arena_hexdump(arena);
 
-    arena_pop_to(&arena, mark1);
+    arena_pop_to(arena, mark1);
     printf("\n");
     printf("--- pop : to saved position (%llu)\n", mark1);
     printf("        : decommit and fill dependent on flags, check below ..\n");
     printf("\n");
     printf("arena.base[%3llu .. %4llu] = { ", mark1-1, mark2-1);
+    u8* base = (u8*)arena;
     for (u64 i = 0; i < 5; ++i)
-        printf("0x%02X ", arena.base[arena.pos+i]);
-    printf(" ... 0x%02X }\n", arena.base[mark2-1]);
-    printf("arena.base[%3llu .. %4llu] = { ", mark2, arena.commit_size-1);
+        printf("0x%02X ", base[arena->pos+i]);
+    printf(" ... 0x%02X }\n", base[mark2-1]);
+    printf("arena.base[%3llu .. %4llu] = { ", mark2, arena->commit_size-1);
     for (u64 i = 0; i < 5; ++i)
-        printf("0x%02X ", arena.base[mark2+i]);
-    printf(" ... 0x%02X }\n", arena.base[arena.commit_size-1]);
+        printf("0x%02X ", base[mark2+i]);
+    printf(" ... 0x%02X }\n", base[arena->commit_size-1]);
     printf("\n");
 
-    arena_hexdump(&arena);
+    arena_hexdump(arena);
 
-    u32* new_data = arena_push_array(&arena, u32, 20);
+    u32* new_data = arena_push_array(arena, u32, 20);
     printf("\n");
     printf("--- push : u32[20]\n");
     printf("---      : u32[0] -> %d\n", new_data[0]);
     printf("\n");
 
-    arena_hexdump(&arena);
+    arena_hexdump(arena);
 
 
     printf("\n");
     printf("--- clear : Decommitting due to flags\n");
     printf("\n");
-    arena_clear(&arena);
+    arena_clear(arena);
 
-    arena_hexdump(&arena);
+    arena_hexdump(arena);
 
 
-    RingBuffer* buffer = arena_push_t_zero(&arena, RingBuffer);
+    RingBuffer* buffer = arena_push_t_zero(arena, RingBuffer);
     *buffer = ring_buffer_alloc(KB(64));
 
     printf("\n");
@@ -366,8 +368,9 @@ int main(void)
 
 
     ring_buffer_release(buffer);
-    arena_release(&arena);
+    arena_release(arena);
 
+    printf("--------- FINISHED ----------\n");
 
     return 0;
 }
