@@ -190,17 +190,7 @@ typedef u32                b32; AETHER_STATIC_ASSERT(sizeof(b32) == 4, "b32 != 4
 typedef struct bytes      {       u8* data; u64 size; } bytes;
 typedef struct bytes_view { const u8* data; u64 size; } bytes_view;
 
-/*-------- S T R I N G S -----------------------------------------------------*/
-
-typedef bytes      str8;
-typedef bytes_view str8_view;
-
 static  inline bytes_view view_from_bytes(bytes b) { bytes_view v = {b.data, b.size}; return v; }
-static  inline str8_view  view_from_str8(str8 s)   { str8_view  v = {s.data, s.size}; return v; }
-
-#define STR(s) (AETHER_LITERAL(str8_view){ (const u8*)(s), sizeof(s) - 1 })
-#define STR8_ARG(s) ((int)((s).size)), ((const char*)((s).data))
-#define STR8_FMT "%.*s"
 
 /*----------------------------------------------------------------------------*/
 
@@ -247,20 +237,13 @@ typedef struct Arena {
 
 AETHER_STATIC_ASSERT(sizeof(Arena) <= AETHER_ARENA_HEADER_SIZE, "Arena header exceeds reserved header size");
 
-typedef struct ArenaTemp {
-    Arena* arena;
-    u64 pos;
-} ArenaTemp;
-
 Arena* arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags);
 Arena* arena_alloc(u64 reserve_size);
 void   arena_release(Arena* arena);
-
 void*  arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero);
-void   arena_pop(Arena* arena, u64 amt);
 void   arena_pop_to(Arena* arena, u64 pos);
-
-void  arena_clear(Arena* arena);
+void   arena_pop(Arena* arena, u64 amt);
+void   arena_clear(Arena* arena);
 
 static inline void* arena_push_array_(Arena* arena, u64 elem_size, u64 align, u64 count, ArenaZero zero)
 {
@@ -280,15 +263,13 @@ static inline void* arena_push_array_(Arena* arena, u64 elem_size, u64 align, u6
 #define arena_push_t_nozero(arena, T) (T*)arena_push((arena), sizeof(T), ARENA_ALIGN(T), ArenaZero_Never)
 #define arena_push_array_nozero(arena, T, n) (T*)arena_push_array_((arena), sizeof(T), ARENA_ALIGN(T), (n), ArenaZero_Never)
 
-// strings on the arena
-char* arena_push_cstring(Arena* arena, const char* src);
-char* arena_push_cstring_fmt(Arena* arena, const char* fmt, ...);
-
-str8  arena_push_str8_copy(Arena* arena, str8_view src);
-str8  arena_push_str8_from_cstring(Arena* arena, const char* src);
-str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...);
-
 // temporary arenas
+
+typedef struct ArenaTemp {
+    Arena* arena;
+    u64 pos;
+} ArenaTemp;
+
 ArenaTemp arena_begin_temp(Arena* arena);
 void      arena_end_temp(ArenaTemp temp);
 
@@ -309,34 +290,117 @@ b8         ring_buffer_write(RingBuffer* rb, const void* src, u64 len);
 b8         ring_buffer_advance_read(RingBuffer* rb, u64 len);
 bytes_view ring_buffer_peek(RingBuffer* rb, u64 len);
 
-/* -------- S T R I N G - O P E R A T I O N S ------------------------------ */
-str8_view view_from_c_str(const char* s);
+/*-------- S T R I N G S -----------------------------------------------------*/
 
-// convert to null-terminated string
+/* note(chris):
+ *    - str8's pushed onto an arena will be nul-terminated by convention
+ *    - nul-termination is not included in size
+ *    - str8_view has no gaurantee of nul-termination
+ */
+
+typedef bytes      str8;
+typedef bytes_view str8_view;
+
+typedef struct str16      {       u16* data; u64  size; } str16;
+typedef struct str16_view { const u16* data; u64  size; } str16_view;
+
+static  inline str8_view  view_from_raw(const void* data, u64 size) { str8_view v = {(const u8*)data, size}; return v; }
+static  inline str8_view  view_from_str8(str8 s)   { str8_view  v = {s.data, s.size}; return v; }
+static  inline str16_view view_from_str16(str16 s) { str16_view  v = {s.data, s.size}; return v; }
+
+#define STR(s) (AETHER_LITERAL(str8_view){ (const u8*)(s), sizeof(s) - 1 })
+#define STR8_ARG(s) ((int)((s).size)), ((const char*)((s).data))
+#define STR8_FMT "%.*s"
+
+typedef struct Str8Node Str8Node;
+struct Str8Node
+{
+    Str8Node* next;
+    str8_view  v;
+};
+
+typedef struct Str8List
+{
+    Str8Node* first;
+    Str8Node* last;
+    u64        count;
+    u64        total_len;
+} Str8List;
+
+typedef struct Str8Array
+{
+    str8_view* items;
+    u64        count;
+} Str8Array;
+
+typedef u8 Str8SplitFlags;
+enum Str8SplitFlags_
+{
+    Str8SplitFlags_None      = 0u,
+    Str8SplitFlags_SkipEmpty = BIT8(0),
+};
+
+// --- construction --- 
 char*     c_str(Arena* arena, str8_view s);
+char*     c_str_push_copy(Arena* arena, const char* src);
+char*     c_str_push_fmt(Arena* arena, const char* fmt, ...);
 
+str8      str8_push_copy(Arena* arena, str8_view src);
+str8      str8_push_c_str(Arena* arena, const char* src);
+str8      str8_push_fmt(Arena* arena, const char* fmt, ...);
+str8      str8_concat(Arena* arena, str8_view a, str8_view b);
+
+// --- view / slices --- (no allocation)
+str8_view view_from_c_str(const char* s);
+str8_view str8_slice(str8_view s, u64 start, u64 end);  /* return substr from [start, end) */
+str8_view str8_skip(str8_view s, u64 n);                /* skip first n characters */
+str8_view str8_drop(str8_view s, u64 n);                /* drop last n characters */
+str8_view str8_trim(str8_view s);                       /* trim whitespace from both end */
+str8_view str8_trim_left(str8_view s);                  /* trim whitespace from left */
+str8_view str8_trim_right(str8_view s);                 /* trim whitespace from right */
+
+// --- queries ---       (no allocation)
 b8        str8_eq(str8_view a, str8_view b);
-i32       str8_cmp(str8_view a, str8_view b); /* memcmp-style ordering */
-str8_view str8_slice(str8_view s, u64 start, u64 end);
-str8_view str8_trim(str8_view s);
+b8        str8_eq_nocase(str8_view a, str8_view b);
 b8        str8_has_prefix(str8_view s, str8_view prefix);
+b8        str8_has_suffix(str8_view s, str8_view suffix);
+b8        str8_find(str8_view s, str8_view needle, u64* pos);
+b8        str8_find_last(str8_view s, str8_view needle, u64* pos);
+b8        str8_find_char(str8_view s, u8 c, u64* pos);
+i32       str8_cmp(str8_view a, str8_view b); /* memcmp-style ordering */
+
+// --- cut / split / list / join --- 
 b8        str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after);
+Str8List  str8_split(Arena* arena, str8_view s, str8_view sep, Str8SplitFlags flags);
+void      str8_list_push(Arena* arena, Str8List* list, str8_view v);
+void      str8_list_push_fmt(Arena* arena, Str8List* list, const char* fmt, ...);
+str8      str8_join(Arena* arena, Str8List*list, str8_view sep);
+Str8Array str8_list_to_array(Arena* arena, Str8List* list);
 
-// todo(chris): additional string operations (find, split, etc.)
-// str8_view* str8_split(Arena* arena str8_view s, str8_view delimiter, u64* out_len);
-// b8         str*_find(str8_view s, str8_view sub);
+// --- transforms ---     (allocation)
+str8      str8_to_upper(Arena* arena, str8_view s);
+str8      str8_to_lower(Arena* arena, str8_view s);
+str8      str8_replace(Arena* arena, str8_view s, str8_view old, str8_view target); /* split + join*/
 
+// --- parsing --- 
+b8        str8_to_u64(str8_view s, u64* out);
+b8        str8_to_i64(str8_view s, i64* out);
+b8        str8_to_f64(str8_view s, f64* out);
+
+// --- paths --- 
+// todo(chris): do this
 
 
 /* ------- F I L E - I / O ------------------------------------------------- */
 
-bytes arena_read_file(Arena* arena, const char* path);
+bytes file_read(Arena* arena, const char* path);
+u64   file_write(const char* path, bytes_view data);
 
 // Read-only view into a memory mapped file
-bytes_view map_file(const char* path);
-void       unmap_file(bytes_view map);
+bytes_view file_map(const char* path);
+void       file_unmap(bytes_view map);
 
-/* ------- H E L P E R S --------------------------------------------------- */
+/* ------- T I M E R S ----------------------------------------------------- */
 u64 time_mark(void);
 f64 time_elapsed_sec(u64 start, u64 end);
 
@@ -365,7 +429,13 @@ void         high_res_timer_release(HighResTimer* t);
 
 #include <string.h>
 #include <stdarg.h>
+#include <stdlib.h> /* for str8_to_f64 */
+#include <errno.h>  /* for str8_to_f64 */
 
+
+/*---------------------------------------------------------------------------*/
+/* --- P L A T F O R M ----------------------------------------------------- */
+/*---------------------------------------------------------------------------*/
 #ifdef _WIN32
     #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
@@ -404,6 +474,40 @@ void         high_res_timer_release(HighResTimer* t);
 extern "C"
 {
 #endif // __cplusplus
+
+static u32 os_get_last_error(void)
+{
+#ifdef _WIN32
+    return (u32)GetLastError();
+#else
+    #error "AETHER: OS get last error not implemented on this platform"
+#endif
+}
+
+static str8 os_error_string(Arena* arena, u32 code)
+{
+#ifdef _WIN32
+    char buf[512];
+    DWORD len = FormatMessageA(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        0, (DWORD)code,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        buf, sizeof(buf), 0
+    );
+
+    // string trailing "\r\n"
+    while (len > 0 && (buf[len-1] == '\r' || buf[len-1] == '\n'))
+    {
+        len -= 1;
+    }
+
+    if (len == 0) return str8_push_fmt(arena, "unknown error (%u)", code );
+
+    return str8_push_copy(arena, view_from_raw(buf, len));
+#else
+    #error "AETHER: OS error string not implemented on this platform"
+#endif
+}
 
 static u64 os_mem_pagesize(void)
 {
@@ -496,8 +600,17 @@ static void* os_file_open_for_read(const char* path)
 static void* os_file_open_for_write(const char* path)
 {
 #ifdef _WIN32
-    (void)path;
-    return NULL;
+    HANDLE h = CreateFileA(
+        path,
+        GENERIC_WRITE,
+        0,             /* no sharing while we write */
+        NULL,
+        CREATE_ALWAYS, /* create, or truncate existing */
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+    if (h == INVALID_HANDLE_VALUE) return NULL;
+    return h;
 #else
     #error "AETHER: OS file open for write not implemented for this platform"
 #endif
@@ -553,6 +666,36 @@ static b8  os_file_read(void* handle, void* dst, u64 size)
     return true;
 #else
     #error "AETHER: OS file read not implemented for this platform"
+#endif
+}
+
+static b8 os_file_write(void* handle, const void* src, u64 size)
+{
+#ifdef _WIN32
+    const u8* cursor    = (const u8*)src;
+    u64       remaining = size;
+
+    while (remaining > 0)
+    {
+        DWORD chunk = (remaining > MAXDWORD) ? MAXDWORD : (DWORD)remaining;
+        DWORD written = 0;
+
+        if (!WriteFile(handle, cursor, chunk, &written, NULL))
+        {
+            return false;
+        }
+
+        if (written == 0) /* no forward progress */
+            return false;
+
+        cursor    += written;
+        remaining -= written;
+
+    }
+    return true;
+    
+#else
+    #error "AETHER: OS file write not implemented on this platform"
 #endif
 }
 
@@ -708,6 +851,10 @@ static void os_cpu_relax(void)
     #error "AETHER: OS cpu relax not implemented for this platform"
 #endif
 }
+
+/* ------------------------------------------------------------------------- */
+/* --- A R E N A S --------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 
 static u64 round_up_power_2(u64 n)
 {
@@ -891,93 +1038,6 @@ void arena_clear(Arena* arena)
     arena_pop_to(arena, AETHER_ARENA_HEADER_SIZE);
 }
 
-char* arena_push_cstring(Arena* arena, const char* src)
-{
-    size_t len = strlen(src);
-    char *dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
-    memcpy(dst, src, len + 1);
-    return dst;
-}
-
-static inline char* arena_push_cstring_fmtv(Arena* arena, const char* fmt, va_list args)
-{
-    va_list args_copy;
-    va_copy(args_copy, args);
-
-    int len = vsnprintf(NULL, 0, fmt, args_copy);
-    va_end(args_copy);
-
-    AETHER_ASSERT_(len >= 0);
-
-    /* use 1-byte alignment to maximum packing */
-    char* buffer = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
-    int written = vsnprintf(buffer, (size_t)len + 1, fmt, args);
-    AETHER_ASSERT_(written == len);
-
-    return buffer;
-}
-
-char* arena_push_cstring_fmt(Arena* arena, const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    char* result = arena_push_cstring_fmtv(arena, fmt, args);
-    va_end(args);
-    return result;
-}
-
-str8  arena_push_str8_copy(Arena* arena, str8_view src)
-{
-    str8 result;
-    result.size = src.size;
-    result.data = (u8*)arena_push(arena, src.size, 1, ArenaZero_FollowPolicy);
-    memcpy(result.data, src.data, src.size);
-    return result;
-}
-
-str8  arena_push_str8_from_cstring(Arena* arena, const char* src)
-{
-    size_t len = strlen(src);
-    char*  dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
-    memcpy(dst, src, len + 1);
-
-    str8 result;
-    result.data = (u8*)dst;
-    result.size = (u64)len; /* excludes the null terminator */
-    return result;
-}
-
-static inline str8  arena_push_str8_fmtv(Arena* arena, const char* fmt, va_list args)
-{
-    va_list args_copy;
-    va_copy(args_copy, args);
-
-    int len = vsnprintf(NULL, 0, fmt, args_copy);
-
-    va_end(args_copy);
-
-    AETHER_ASSERT_(len >= 0);
-
-    char* buffer = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Force);
-
-    int written = vsnprintf(buffer, (size_t)len + 1, fmt, args);
-    AETHER_ASSERT_(written == len);
-
-    str8 result;
-    result.data = (u8*)buffer;
-    result.size = (u64)len; /* excludes null terminator */
-    return result;
-}
-
-str8  arena_push_str8_fmt(Arena* arena, const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    str8 result = arena_push_str8_fmtv(arena, fmt, args);
-    va_end(args);
-    return result;
-}
-
 ArenaTemp arena_begin_temp(Arena* arena)
 {
     ArenaTemp tmp;
@@ -991,6 +1051,10 @@ void arena_end_temp(ArenaTemp temp)
     AETHER_ASSERT_(temp.pos <= temp.arena->pos);
     arena_pop_to(temp.arena, temp.pos);
 }
+
+/* ------------------------------------------------------------------------- */
+/* --- R I N G / B U F F E R S --------------------------------------------- */
+/* ------------------------------------------------------------------------- */
 
 RingBuffer ring_buffer_alloc(u64 size)
 {
@@ -1026,12 +1090,6 @@ RingBuffer ring_buffer_alloc(u64 size)
     return rb;
 }
 
-u64 ring_buffer_available(RingBuffer* rb)
-{
-    if (!rb || !rb->base) return 0;
-    return rb->write - rb->read;
-}
-
 void ring_buffer_release(RingBuffer* rb)
 {
     if (!rb || !rb->base) return;
@@ -1040,6 +1098,12 @@ void ring_buffer_release(RingBuffer* rb)
     rb->size  = 0;
     rb->read  = 0;
     rb->write = 0;
+}
+
+u64 ring_buffer_available(RingBuffer* rb)
+{
+    if (!rb || !rb->base) return 0;
+    return rb->write - rb->read;
 }
 
 b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len)
@@ -1092,6 +1156,122 @@ bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
     return v;
 }
 
+/* ------------------------------------------------------------------------- */
+/* --- S T R I N G S ------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
+
+char* c_str(Arena* arena, str8_view s)
+{
+    AETHER_ASSERT_(arena != NULL);
+    AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
+
+    char* dst = (char*)arena_push(arena, s.size + 1, 1, ArenaZero_Never);
+    if (s.size) memcpy(dst, s.data, s.size);
+    dst[s.size] = '\0';
+    return dst;
+}
+
+char* c_str_push_copy(Arena* arena, const char* src)
+{
+    size_t len = strlen(src);
+    char *dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Never);
+    memcpy(dst, src, len + 1);
+    return dst;
+}
+
+static inline char* c_str_push_fmtv(Arena* arena, const char* fmt, va_list args)
+{
+    va_list args_copy;
+    va_copy(args_copy, args);
+
+    int len = vsnprintf(NULL, 0, fmt, args_copy);
+    va_end(args_copy);
+
+    AETHER_ASSERT_(len >= 0);
+
+    /* use 1-byte alignment to maximum packing */
+    char* dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Never);
+    int written = vsnprintf(dst, (size_t)len + 1, fmt, args);
+    AETHER_ASSERT_(written == len);
+
+    return dst;
+}
+
+char* c_str_push_fmt(Arena* arena, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    char* dst = c_str_push_fmtv(arena, fmt, args);
+    va_end(args);
+    return dst;
+}
+
+str8 str8_push_copy(Arena* arena, str8_view src)
+{
+    str8 result;
+    result.size = src.size;
+    result.data = (u8*)arena_push(arena, src.size + 1, 1, ArenaZero_Never);
+    memcpy(result.data, src.data, src.size);
+    result.data[result.size] = '\0';
+    return result;
+}
+
+str8 str8_push_c_str(Arena* arena, const char* src)
+{
+    size_t len = strlen(src);
+    char*  dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Never);
+    memcpy(dst, src, len + 1);
+
+    str8 result;
+    result.data = (u8*)dst;
+    result.size = (u64)len; /* excludes the null terminator */
+    return result;
+}
+
+static inline str8 str8_push_fmtv(Arena* arena, const char* fmt, va_list args)
+{
+    va_list args_copy;
+    va_copy(args_copy, args);
+
+    int len = vsnprintf(NULL, 0, fmt, args_copy);
+
+    va_end(args_copy);
+
+    AETHER_ASSERT_(len >= 0);
+
+    char* dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Never);
+
+    int written = vsnprintf(dst, (size_t)len + 1, fmt, args);
+    AETHER_ASSERT_(written == len);
+
+    str8 result;
+    result.data = (u8*)dst;
+    result.size = (u64)len; /* excludes null terminator */
+    return result;
+}
+
+str8 str8_push_fmt(Arena* arena, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    str8 result = str8_push_fmtv(arena, fmt, args);
+    va_end(args);
+    return result;
+}
+
+str8 str8_concat(Arena* arena, str8_view a, str8_view b)
+{
+    str8 result;
+
+    result.size = a.size + b.size;
+    result.data = (u8*)arena_push(arena, result.size+1, 1, ArenaZero_Never);
+    memcpy(result.data, a.data, a.size);
+    memcpy(result.data+a.size, b.data, b.size);
+    result.data[result.size] = '\0';
+
+    return result;
+}
+
 str8_view view_from_c_str(const char* s)
 {
     str8_view v = {0};
@@ -1107,84 +1287,149 @@ str8_view view_from_c_str(const char* s)
     return v;
 }
 
-char* c_str(Arena* arena, str8_view s)
+str8_view str8_slice(str8_view s, u64 start, u64 end)
 {
-    AETHER_ASSERT_(arena != NULL);
-    AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
-
-    char* out = (char*)arena_push(arena, s.size + 1, 1, ArenaZero_Never);
-    if (s.size) memcpy(out, s.data, s.size);
-    out[s.size] = '\0';
-    return out;
-}
-
-bytes  arena_read_file(Arena* arena, const char* path)
-{
-    bytes result = {0};
-    void* h = os_file_open_for_read(path);
-    if (!h) return result;
-
-    u64 size = 0;
-    if (!os_file_size(h, &size)) { os_file_close(h); return result; } /* recoverable: missing/inaccessible file */
-
-    u64 mark = arena->pos;
-
-    result.data = arena_push_array_nozero(arena, u8, size);
-    result.size = size;
-
-    b8 ok = os_file_read(h, result.data, size);
-    os_file_close(h);
-
-    if (!ok) {
-        arena_pop_to(arena, mark);
-        result.data = NULL;
-        result.size = 0;
-        return result;
-    }
-
-    return result;
-}
-
-bytes_view  map_file(const char* path)
-{
-    bytes_view v = {0};
-    void* h = os_file_open_for_read(path);
-    if (!h) { return v; }
-
-    u64 size = 0;
-    if (!os_file_size(h, &size)) { os_file_close(h); return v; } /* recoverable: missing/inaccessible file */
-    if (size == 0) { os_file_close(h); return v; }
-
-    u8* data = (u8*)os_file_map(h, size);
-    os_file_close(h);
-
-    if (!data) { return v; }
-
-    v.data = data;
-    v.size = size;
+    AETHER_ASSERT_(start <= end && end <= s.size);
+    str8_view v;
+    v.data = s.data + start;
+    v.size = end - start;
     return v;
 }
 
-void  unmap_file(bytes_view buf)
+str8_view str8_skip(str8_view s, u64 n)
 {
-    os_file_unmap(buf.data, buf.size);
+    AETHER_ASSERT_(n <= s.size);
+    return str8_slice(s, n, s.size);
 }
 
-u64 time_mark(void)
+str8_view str8_drop(str8_view s, u64 n)
 {
-    return os_time_now();
+    AETHER_ASSERT_(n <= s.size);
+    return str8_slice(s, 0, s.size - n);
 }
 
-f64 time_elapsed_sec(u64 start, u64 end)
+static b8 char_is_ws(u8 c)    { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+static b8 char_is_upper(u8 c) { return ('A' <= c && c <= 'Z'); }
+static b8 char_is_lower(u8 c) { return ('a' <= c && c <= 'z'); }
+
+str8_view str8_trim(str8_view s)
 {
-    return (f64)(end - start) / (f64)os_time_frequency();
+    u64 start = 0;
+    while (start < s.size && char_is_ws(s.data[start])) start++;
+
+    u64 end   = s.size;
+    while (end > start && char_is_ws(s.data[end-1])) end--;
+
+    return str8_slice(s, start, end);
 }
+
+str8_view str8_trim_left(str8_view s)
+{
+    u64 start = 0;
+    while (start < s.size && char_is_ws(s.data[start])) start++;
+
+    return str8_slice(s, start, s.size);
+}
+
+str8_view str8_trim_right(str8_view s)
+{
+    u64 end = s.size;
+    while ( end > 0 && char_is_ws(s.data[end-1])) end--;
+
+    return str8_slice(s, 0, end);
+}
+
 
 b8 str8_eq(str8_view a, str8_view b)
 {
     if (a.size != b.size) return false;
     if (a.data == b.data) return true;
     return memcmp(a.data, b.data, a.size) == 0;
+}
+
+b8 str8_eq_nocase(str8_view a, str8_view b)
+{
+    if (a.size != b.size) return false;
+
+    u8 c1, c2;
+    for (u64 i = 0; i < a.size; ++i)
+    {
+        c1 = char_is_upper(a.data[i]) ? a.data[i] + 32 : a.data[i];
+        c2 = char_is_upper(b.data[i]) ? b.data[i] + 32 : b.data[i];
+        if (c1 != c2) return false;
+    }
+    return true;
+
+}
+
+b8 str8_has_prefix(str8_view s, str8_view prefix)
+{
+    if (!prefix.data || !prefix.size || !s.data || !s.size) return false;
+
+    if (s.size < prefix.size) return false;
+
+    for (u64 i = 0; i < prefix.size; ++i)
+        if (s.data[i] != prefix.data[i]) return false;
+
+    return true;
+}
+
+b8 str8_has_suffix(str8_view s, str8_view suffix)
+{
+    if (!suffix.data || !suffix.size || !s.data || !s.size) return false;
+
+    if (s.size < suffix.size) return false;
+
+    u64 j = 0;
+    for (u64 i = s.size - suffix.size; i < s.size; ++i)
+    {
+        if (j >= suffix.size) return false;
+        if (s.data[i] != suffix.data[j++]) return false;
+    }
+
+    return true;
+}
+
+// todo(chris): update brute-force method to use Boyer-Moore-Horspool
+b8 str8_find(str8_view s, str8_view needle, u64* pos)
+{
+    if (needle.size == 0) { *pos = 0; return true; }
+    if (needle.size > s.size) return false;
+
+    u64 last = s.size - needle.size;
+    for (u64 i = 0; i <= last; i += 1)
+    {
+        u64 j = 0;
+        while (j < needle.size && s.data[i+j] == needle.data[j]) { j += 1; }
+        if (j == needle.size) { *pos = (u64)i; return true; }
+    }
+    return false;
+}
+
+b8 str8_find_last(str8_view s, str8_view needle, u64* pos)
+{
+    if (needle.size == 0) {*pos = s.size; return true;}
+    b8 found = false;
+    u64 base = 0;
+    str8_view rest = s;
+    u64 p;
+    while (rest.size > 0 && str8_find(rest, needle, &p))
+    {
+        found = true;
+        *pos  = base + p;
+        base += p + needle.size;
+        rest = str8_skip(s, base);
+    }
+    return found;
+}
+
+b8 str8_find_char(str8_view s, u8 c, u64* pos)
+{
+    for (u64 i = 0; i < s.size; ++i)
+    {
+        if (c == s.data[i]) { *pos = i; return true; }
+    }
+    return false;
 }
 
 i32 str8_cmp(str8_view a, str8_view b)
@@ -1225,39 +1470,314 @@ b8 str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after)
     return false;
 }
 
-b8 str8_has_prefix(str8_view s, str8_view prefix)
+Str8List str8_split(Arena* arena, str8_view s, str8_view sep, Str8SplitFlags flags)
 {
-    if (!prefix.data || !prefix.size || !s.data || s.size == 0) return false;
+    Str8List list = {0};
 
-    if (s.size < prefix.size) return false;
+    str8_view before;
+    str8_view rest = s;
+    b8 more;
+    do {
+        more = str8_cut(rest, sep, &before, &rest);
+        if (before.size > 0 || !(flags & Str8SplitFlags_SkipEmpty))
+            str8_list_push(arena, &list, before);
+    } while (more);
+    return list;
+}
 
-    for (u64 i = 0; i < prefix.size; ++i)
-        if (s.data[i] != prefix.data[i]) return false;
+void str8_list_push(Arena* arena, Str8List* list, str8_view v)
+{
+    Str8Node* node = arena_push_t_nozero(arena, Str8Node);
+    node->v = v;
+    node->next = 0;
 
+    if (list->last) list->last->next = node;
+    else            list->first      = node;
+
+    list->last       = node;
+    list->count     += 1;
+    list->total_len += v.size;
+}
+
+static void str8_list_push_fmtv(Arena* arena, Str8List* list, const char* fmt, va_list args)
+{
+    str8_view v = view_from_str8(str8_push_fmtv(arena, fmt, args));
+    str8_list_push(arena, list, v);
+}
+
+void str8_list_push_fmt(Arena* arena, Str8List* list, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    str8_list_push_fmtv(arena, list, fmt, args);
+    va_end(args);
+}
+
+str8 str8_join(Arena* arena, Str8List* list, str8_view sep)
+{
+    str8 dst = {0};
+
+    Str8Node* node = list->first;
+    if (!node) return dst;
+
+    u64 len = list->total_len + (list->count - 1) * sep.size;
+    u8* buf = (u8*)arena_push(arena, len + 1, 1, ArenaZero_Never);
+
+    u64 offset = 0;
+    while (node)
+    {
+        if (node != list->first)
+        {
+            memcpy(buf + offset, sep.data, sep.size);
+            offset += sep.size;
+        }
+        memcpy(buf + offset, node->v.data, node->v.size);
+        offset += node->v.size;
+        node = node->next;
+
+    }
+    buf[len] = '\0';
+
+    dst.data = buf;
+    dst.size = len;
+    return dst;
+}
+
+Str8Array str8_list_to_array(Arena* arena, Str8List* list)
+{
+    Str8Array result = {0};
+    if (!list) return result;
+
+    result.items = (str8_view*)arena_push_array_nozero(arena, str8_view, list->count);
+    result.count = list->count;
+
+    Str8Node* node = list->first;
+    for (u64 i = 0; i < result.count; ++i)
+    {
+        result.items[i] = node->v;
+        node = node->next;
+        AETHER_ASSERT_(node);
+    }
+    return result;
+}
+
+str8 str8_to_upper(Arena* arena, str8_view s)
+{
+    str8 result;
+    result.size = s.size;
+    result.data = (u8*)arena_push(arena, s.size + 1, 1, ArenaZero_Never);
+
+    for (u64 i = 0; i < s.size; ++i)
+        result.data[i] = char_is_lower(s.data[i]) ? s.data[i] - 32 : s.data[i];
+
+    result.data[result.size] = '\0';
+    return result;
+}
+
+str8 str8_to_lower(Arena* arena, str8_view s)
+{
+    str8 result;
+    result.size = s.size;
+    result.data = (u8*)arena_push(arena, s.size + 1, 1, ArenaZero_Never);
+
+    for (u64 i = 0; i < s.size; ++i)
+        result.data[i] = char_is_upper(s.data[i]) ? s.data[i] + 32: s.data[i];
+
+    result.data[result.size] = '\0';
+    return result;
+}
+
+str8 str8_replace(Arena* arena, str8_view s, str8_view old, str8_view target)
+{
+
+    u64 count = 0;
+    u64 pos   = 0;
+
+    str8_view rest = s;
+    while (old.size > 0 && old.size<= rest.size && str8_find(rest, old, &pos))
+    {
+        count += 1;
+        rest = str8_skip(rest, pos + old.size);
+    }
+
+    u64 new_len = s.size + count * (i64)(target.size - old.size);
+    u8* buf     = (u8*)arena_push(arena, new_len + 1, 1, ArenaZero_Never);
+
+    u64 w = 0;
+    rest = s;
+    while (old.size > 0 && old.size <= rest.size && str8_find(rest, old, &pos))
+    {
+        memcpy(buf + w, rest.data, pos); w += pos;
+        memcpy(buf + w, target.data, target.size); w += target.size;
+        rest = str8_skip(rest, pos + old.size);
+    }
+
+    memcpy(buf + w, rest.data, rest.size); w += rest.size;
+    buf[w] = '\0';
+
+    str8 result = {buf, w};
+    return result;
+}
+
+
+b8 str8_to_u64(str8_view s, u64* out)
+{
+    if (s.size == 0) return false;
+
+    u64 v = 0;
+    b8 has_digit = false;
+    for (u64 i = 0; i < s.size; ++i)
+    {
+        u8 c = s.data[i];
+        if (i == 0 && c == '-') return false;
+        if (i == 0 && c == '+') continue;
+        if (c < '0' || c > '9') return false;
+
+        u8 d = c - '0';
+
+        if ( v > (U64_MAX - d) / 10 ) return false; /* would overflow */
+        v = v * 10 + d;
+        has_digit = true;
+    }
+
+    if (!has_digit) return false;
+
+    *out = v;
     return true;
 }
 
-str8_view str8_slice(str8_view s, u64 start, u64 end)
+b8 str8_to_i64(str8_view s, i64* out)
 {
-    AETHER_ASSERT_(start <= end && end <= s.size);
-    str8_view v;
-    v.data = s.data + start;
-    v.size = end - start;
+    if (s.size == 0) return false;
+
+    u64 v = 0;
+    i64 sign = 1;
+    b8 has_digit = false;
+    for (u64 i = 0; i < s.size; ++i) 
+    {
+        u8 c = s.data[i];
+
+        if (i == 0 && c == '-') { sign = -1; continue; }
+        if (i == 0 && c == '+') continue;
+        if (c < '0' || c > '9') return false;
+
+        u8 d = c - '0';
+
+        if ( v > (U64_MAX - d) / 10 ) return false;
+        v = v * 10 + d;
+        has_digit = true;
+    }
+    
+    if ( !has_digit ) return false;
+    if ( sign ==  1 && v > (u64)I64_MAX)     return false;
+    if ( sign == -1 && v > (u64)I64_MAX + 1) return false;
+
+    *out = (i64)(sign == -1 ? (u64)0 - v : v);
+    return true;
+}
+
+b8 str8_to_f64(str8_view s, f64* out)
+{
+    // todo(chris): handroll this for the excercise
+    char buf[64];
+    if (s.size == 0 || s.size >= sizeof(buf)) return false;
+
+    memcpy(buf, s.data, s.size);
+    buf[s.size] = '\0';
+
+    char* end = NULL;
+    errno = 0;
+    f64 v = strtod(buf, &end);
+
+    if (end != buf + s.size) return false; /* didn't consume the whole string */
+    if (errno == ERANGE)     return false; /* overflow to +/- HUGE_VAL, or subnormal underflow */
+
+    *out = v;
+    return true;
+}
+
+/* ------------------------------------------------------------------------- */
+/* --- F I L E - I / O ----------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
+
+
+bytes  file_read(Arena* arena, const char* path)
+{
+    bytes result = {0};
+    void* h = os_file_open_for_read(path);
+    if (!h) return result;
+
+    u64 size = 0;
+    if (!os_file_size(h, &size)) { os_file_close(h); return result; } /* recoverable: missing/inaccessible file */
+
+    u64 mark = arena->pos;
+
+    result.data = arena_push_array_nozero(arena, u8, size);
+    result.size = size;
+
+    b8 ok = os_file_read(h, result.data, size);
+    os_file_close(h);
+
+    if (!ok) {
+        arena_pop_to(arena, mark);
+        result.data = NULL;
+        result.size = 0;
+        return result;
+    }
+
+    return result;
+}
+
+u64 file_write(const char* path, bytes_view data)
+{
+    void* h = os_file_open_for_write(path);
+    if (!h) return 0;
+
+    b8 ok = os_file_write(h, data.data, data.size);
+    os_file_close(h);
+
+    return ok ? data.size : 0;
+}
+
+bytes_view  file_map(const char* path)
+{
+    bytes_view v = {0};
+    void* h = os_file_open_for_read(path);
+    if (!h) { return v; }
+
+    u64 size = 0;
+    if (!os_file_size(h, &size)) { os_file_close(h); return v; } /* recoverable: missing/inaccessible file */
+    if (size == 0) { os_file_close(h); return v; }
+
+    u8* data = (u8*)os_file_map(h, size);
+    os_file_close(h);
+
+    if (!data) { return v; }
+
+    v.data = data;
+    v.size = size;
     return v;
 }
 
-static b8 char_is_ws(u8 c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
-
-str8_view str8_trim(str8_view s)
+void  file_unmap(bytes_view buf)
 {
-    u64 start = 0;
-    while (start < s.size && char_is_ws(s.data[start])) start++;
-
-    u64 end   = s.size;
-    while (end > start && char_is_ws(s.data[end-1])) end--;
-
-    return str8_slice(s, start, end);
+    os_file_unmap(buf.data, buf.size);
 }
+
+/* ------------------------------------------------------------------------- */
+/* --- T I M I N G --------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
+
+u64 time_mark(void)
+{
+    return os_time_now();
+}
+
+f64 time_elapsed_sec(u64 start, u64 end)
+{
+    return (f64)(end - start) / (f64)os_time_frequency();
+}
+
 
 HighResTimer high_res_timer_create(f64 hz)
 {

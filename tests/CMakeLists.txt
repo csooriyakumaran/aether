@@ -31,10 +31,27 @@ target_link_libraries(test_strings
         aether::aether
 )
 
-set(STRING_TEST_CASES eq cmp slice trim str_macro views c_str)
+set(STRING_TEST_CASES eq cmp slice trim str_macro views c_str split
+    skip_drop trim_lr eq_nocase prefix_suffix find cut concat join
+    case_convert replace parse view_sources)
 
 foreach(case ${STRING_TEST_CASES})
     add_test(NAME str8_${case} COMMAND test_strings ${case})
+endforeach()
+
+add_executable(test_files
+    test_files.c
+)
+
+target_link_libraries(test_files
+    PRIVATE
+        aether::aether
+)
+
+set(FILE_TEST_CASES write_read_roundtrip write_truncates write_failure read_missing map_roundtrip map_missing)
+
+foreach(case ${FILE_TEST_CASES})
+    add_test(NAME file_${case} COMMAND test_files ${case})
 endforeach()
 
 add_executable(test_ring

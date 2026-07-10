@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- String operations completing the `str8` API, grouped by allocation behavior:
+  - queries (no allocation): `str8_eq_nocase` (ASCII case-insensitive equality), `str8_has_suffix`, `str8_find` / `str8_find_last` / `str8_find_char` (`str8_find_last` reports the last *non-overlapping* occurrence; an empty needle yields `s.size`).
+  - views (no allocation): `str8_skip` / `str8_drop` (view without the first/last `n` bytes), `str8_trim_left` / `str8_trim_right`.
+  - lists: `Str8List` / `Str8Node` / `Str8Array` with `str8_split` (with `Str8SplitFlags_SkipEmpty` to drop empty runs), `str8_list_push`, `str8_list_push_fmt`, `str8_join`, and `str8_list_to_array`.
+  - transforms (arena-allocating): `str8_concat`, `str8_to_upper` / `str8_to_lower` (ASCII letters only), `str8_replace` (all non-overlapping occurrences).
+  - parsing: `str8_to_u64` / `str8_to_i64` (strict: no whitespace, overflow rejected at `U64_MAX`/`I64_MAX`/`I64_MIN`) and `str8_to_f64` (interim `strtod` delegation; accepts its extended forms, rejects trailing junk and inputs ≥ 64 bytes).
+- `str16` / `str16_view` types and `view_from_str16` / `view_from_raw` helpers.
+- `file_write`: write a byte span to a path with create-or-truncate semantics, returning the byte count on success and `0` on failure (note: a successful zero-byte write also returns `0`). Backed by a now-implemented `os_file_open_for_write` and a chunked `os_file_write` that loops on partial `WriteFile` results.
+- Internal `os_get_last_error` / `os_error_string` helpers (groundwork for richer file-error reporting).
+- Tests: new `tests/test_files.c` (write/read round trip incl. embedded NUL, truncate-on-rewrite, failure paths, map round trip) and twelve new string cases covering every operation above.
+
+### Changed
+- **Breaking:** arena string helpers renamed so the result type leads the name: `arena_push_cstring` → `c_str_push_copy`, `arena_push_cstring_fmt` → `c_str_push_fmt`, `arena_push_str8_copy` → `str8_push_copy`, `arena_push_str8_from_cstring` → `str8_push_c_str`, `arena_push_str8_fmt` → `str8_push_fmt`.
+- **Breaking:** file API renamed to a common `file_` prefix: `arena_read_file` → `file_read`, `map_file` → `file_map`, `unmap_file` → `file_unmap`.
+- Arena-backed `str8` results are now NUL-terminated by convention (`size` still excludes the terminator; `str8_view` carries no such guarantee). `str8_push_copy` previously did not terminate.
+- The implementation now includes `<stdlib.h>` and `<errno.h>` for the interim `strtod`-based `str8_to_f64`; both go away if/when it is hand-rolled.
+
 ## [0.0.11] - 2026-07-03
 
 ### Added

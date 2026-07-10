@@ -9,9 +9,10 @@ It provides a minimal set of common primitives:
 - fixed-width type aliases
 - assertions and utility macros
 - bit flags
-- string views and operations (slice, trim, compare, arena-backed copy/format)
+- string views and operations (slice, trim, find, split/join, replace,
+  case conversion, numeric parsing, arena-backed copy/format)
 - memory arenas (linear allocator with scratch / temporary support)
-- file I/O (read a file into an arena)
+- file I/O (read a file into an arena, write a byte span to a path)
 - memory-mapped files
 - ring / circular buffers (virtually-mirrored — reads and writes that wrap the end stay a single contiguous copy)
 - timing helpers
@@ -180,7 +181,7 @@ arena_pop_to(arena, mark);
 
 ## Use Case: Temporary File Processing
 
-A common pattern is to use a scratch arena for temporary data that only needs to live for the duration of a task. `arena_read_file` reads an entire file into the arena in one call and returns a `bytes` view (`{ u8* data; u64 size; }`).
+A common pattern is to use a scratch arena for temporary data that only needs to live for the duration of a task. `file_read` reads an entire file into the arena in one call and returns a `bytes` view (`{ u8* data; u64 size; }`).
 
 > `arena_alloc(MB(64))` reserves 64 MB of virtual address space. Initial commit, zeroing, and decommit behavior follow the build-configuration defaults described above.
 
@@ -196,7 +197,7 @@ ArenaTemp tmp = arena_begin_temp(scratch);
 /* Read the whole file into the arena. On a missing or
    unreadable file the result is {0} and the arena is left
    untouched, so the caller can recover. */
-bytes file = arena_read_file(scratch, "input.dat");
+bytes file = file_read(scratch, "input.dat");
 
 /*--------------------------------------------------------*/
 /* Process file contents                                  */
@@ -228,20 +229,42 @@ arena_release(scratch);
 
 No individual deallocation is required. The file bytes live in the arena, so once processing is complete the entire working set is discarded together by ending the `ArenaTemp` (or with `arena_pop_to` / `arena_clear`).
 
-### Read-only files: `map_file`
+### Writing files: `file_write`
 
-When a file is large and read-only, `map_file` maps it directly into the address space instead of copying it into an arena. It returns a `bytes_view` (`const u8*`) whose pages are backed by the OS and faulted in on demand.
+`file_write` writes a byte span to a path with create-or-truncate semantics —
+the file ends up containing exactly the span, whether or not it existed before.
+It returns the number of bytes written, or `0` on failure.
 
 ```c
-bytes_view file = map_file("big.dat");   /* OS-backed pages, not arena memory */
-if (file.data)
+str8 report = str8_push_fmt(arena, "residual = %e\n", residual);
+
+bytes_view out = { report.data, report.size };
+if (file_write("report.txt", out) != out.size)
 {
-    process_file_ro(file.data, file.size);
-    unmap_file(file);                    /* independent of any arena lifetime */
+    fprintf(stderr, "could not write report.txt\n");
 }
 ```
 
-A mapped view is **not** owned by any arena: `arena_pop_to` / `arena_clear` do not release it, and it must be returned explicitly with `unmap_file`. Use `arena_read_file` when you need mutable bytes or want the data to share the arena's lifetime; use `map_file` for large read-only inputs you want to page in lazily.
+The write is all-or-nothing from the caller's perspective: anything less than
+the full span is reported as failure (`0`), since a partially written file is
+not recoverable through this API. One consequence of returning a byte count:
+a successful write of an *empty* span also returns `0`, so zero-byte writes
+cannot be distinguished from failure.
+
+### Read-only files: `file_map`
+
+When a file is large and read-only, `file_map` maps it directly into the address space instead of copying it into an arena. It returns a `bytes_view` (`const u8*`) whose pages are backed by the OS and faulted in on demand.
+
+```c
+bytes_view file = file_map("big.dat");   /* OS-backed pages, not arena memory */
+if (file.data)
+{
+    process_file_ro(file.data, file.size);
+    file_unmap(file);                    /* independent of any arena lifetime */
+}
+```
+
+A mapped view is **not** owned by any arena: `arena_pop_to` / `arena_clear` do not release it, and it must be returned explicitly with `file_unmap`. Use `file_read` when you need mutable bytes or want the data to share the arena's lifetime; use `file_map` for large read-only inputs you want to page in lazily.
 
 ## Use Case: Nested Scratch Arenas in a Numerical Kernel
 
@@ -290,6 +313,13 @@ Each call to `eval_rhs` reuses the same bytes for `flux`, four times per step, w
 
 ## Use Case: String allocations
 
+Arena-backed `str8` results (`str8_push_copy`, `str8_push_fmt`, `str8_concat`,
+`str8_join`, ...) are NUL-terminated by convention: `size` excludes the
+terminator, but the byte past the end is always `'\0'`, so `(const char*)s.data`
+can be handed to C APIs directly when the contents contain no embedded NULs.
+`str8_view` carries no such guarantee — use `c_str(arena, view)` to make a
+terminated copy of a view.
+
 ```c
 #include "aether/aether.h"
 
@@ -304,7 +334,7 @@ void string_example(void)
 
     /* Literal to str8_view then copy into the arena */
     str8_view src = STR("hello, world");
-    str8      s   = arena_push_str8_copy(arena, src);
+    str8      s   = str8_push_copy(arena, src);
 
     /* Print using STR8_FMT / STR8_ARG */
     printf("s = " STR8_FMT "\n", STR8_ARG(s));
@@ -314,7 +344,7 @@ void string_example(void)
     /*----------------------------------------------*/
 
     /* Create a formatted str8 backed by the arena */
-    str8 message = arena_push_str8_fmt(
+    str8 message = str8_push_fmt(
         arena,
         "name= " STR8_FMT ", value=%d",
         STR8_ARG(s),
@@ -324,7 +354,7 @@ void string_example(void)
     printf("message = " STR8_FMT "\n", STR8_ARG(message));
 
     /* Create a formatted null-terminated C string on the arena */
-    char* line = arena_push_cstring_fmt(arena, "count = %d", 123);
+    char* line = c_str_push_fmt(arena, "count = %d", 123);
     printf("line = %s\n", line);
 
     /*----------------------------------------------*/

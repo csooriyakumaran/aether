@@ -446,21 +446,21 @@ static void test_strings(void)
 
     Arena* arena = arena_alloc_ex(MB(1), 0, 1, ArenaFlags_None);
 
-    char* c = arena_push_cstring(arena, "hello");
+    char* c = c_str_push_copy(arena, "hello");
     ASSERT(strcmp(c, "hello") == 0);
 
-    char* cf = arena_push_cstring_fmt(arena, "n=%d", 42);
+    char* cf = c_str_push_fmt(arena, "n=%d", 42);
     ASSERT(strcmp(cf, "n=42") == 0);
 
-    str8 s = arena_push_str8_copy(arena, STR("world"));
+    str8 s = str8_push_copy(arena, STR("world"));
     ASSERT(s.size == 5);
     ASSERT(memcmp(s.data, "world", 5) == 0);
 
-    str8 s2 = arena_push_str8_from_cstring(arena, "abc");
+    str8 s2 = str8_push_c_str(arena, "abc");
     ASSERT(s2.size == 3);
     ASSERT(s2.data[3] == 0); /* underlying buffer is still null-terminated, even though size excludes it */
 
-    str8 s3 = arena_push_str8_fmt(arena, "x=%d", 7);
+    str8 s3 = str8_push_fmt(arena, "x=%d", 7);
     ASSERT(s3.size == 3);
     ASSERT(memcmp(s3.data, "x=7", 3) == 0);
 

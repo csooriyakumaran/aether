@@ -232,12 +232,12 @@ int main(void)
     *a = 0x12345678;
 
     /* no-zero terminiation */
-    str8 hello = arena_push_str8_copy(arena, STR("hello") );
+    str8 hello = str8_push_copy(arena, STR("hello") );
     /* with terminiation */
-    const char* world = arena_push_cstring(arena, ", world!");
+    const char* world = c_str_push_copy(arena, ", world!");
 
-    str8 fmt_str8 = arena_push_str8_fmt(arena, "fmt %s %d", "str8: a = ", *a);
-    const char* fmt_char = arena_push_cstring_fmt(arena, "fmt %s %d", "char*: a = ", *a);
+    str8 fmt_str8 = str8_push_fmt(arena, "fmt %s %d", "str8: a = ", *a);
+    const char* fmt_char = c_str_push_fmt(arena, "fmt %s %d", "char*: a = ", *a);
 
     u64 mark1 = arena->pos;
 
