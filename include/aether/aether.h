@@ -308,6 +308,8 @@ static  inline str8_view  view_from_raw(const void* data, u64 size) { str8_view 
 static  inline str8_view  view_from_str8(str8 s)   { str8_view  v = {s.data, s.size}; return v; }
 static  inline str16_view view_from_str16(str16 s) { str16_view  v = {s.data, s.size}; return v; }
 
+static  inline bytes_view bytes_from_str8(str8_view s) { bytes_view v = {s.data, s.size}; return v; }
+
 #define STR(s) (AETHER_LITERAL(str8_view){ (const u8*)(s), sizeof(s) - 1 })
 #define STR8_ARG(s) ((int)((s).size)), ((const char*)((s).data))
 #define STR8_FMT "%.*s"

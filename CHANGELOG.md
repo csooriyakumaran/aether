@@ -4,7 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.0.12] 2026-07-10
+## [Unreleased]
+
+### Added
+- `bytes_from_str8`: converts a `str8_view` to a `bytes_view`. e.g.; `file_write(path, bytes_from_str8(view_from_str8(s)))` for an arena-backed `str8`, or `bytes_from_str8(STR("Literal"))` directly.
+
+## [0.0.12] - 2026-07-10
 
 ### Added
 - String operations completing the `str8` API, grouped by allocation behavior:

@@ -231,25 +231,19 @@ No individual deallocation is required. The file bytes live in the arena, so onc
 
 ### Writing files: `file_write`
 
-`file_write` writes a byte span to a path with create-or-truncate semantics —
-the file ends up containing exactly the span, whether or not it existed before.
-It returns the number of bytes written, or `0` on failure.
+`file_write` writes a byte span to a path with create-or-truncate semantics — the file ends up containing exactly the span, whether or not it existed before. It returns the number of bytes written, or `0` on failure.
 
 ```c
 str8 report = str8_push_fmt(arena, "residual = %e\n", residual);
 
-bytes_view out = { report.data, report.size };
+bytes_view out = bytes_from_str8(view_from_str8(report));
 if (file_write("report.txt", out) != out.size)
 {
     fprintf(stderr, "could not write report.txt\n");
 }
 ```
 
-The write is all-or-nothing from the caller's perspective: anything less than
-the full span is reported as failure (`0`), since a partially written file is
-not recoverable through this API. One consequence of returning a byte count:
-a successful write of an *empty* span also returns `0`, so zero-byte writes
-cannot be distinguished from failure.
+The write is all-or-nothing from the caller's perspective: anything less than the full span is reported as failure (`0`), since a partially written file is not recoverable through this API. One consequence of returning a byte count: a successful write of an *empty* span also returns `0`, so zero-byte writes cannot be distinguished from failure.
 
 ### Read-only files: `file_map`
 
