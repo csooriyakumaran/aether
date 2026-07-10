@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.12] 2026-07-10
 
 ### Added
 - String operations completing the `str8` API, grouped by allocation behavior:
