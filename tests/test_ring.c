@@ -298,6 +298,182 @@ static void test_counter_wrap(void)
     ring_buffer_release(&rb);
 }
 
+/* --- SPSC stress ----------------------------------------------------------
+   Producer and consumer on real OS threads, moving ~32 MB through a 64 KiB
+   ring in randomly sized chunks. Both threads generate the same PRNG byte
+   stream from a shared seed; the consumer verifies every byte. A stale read
+   (old lap data) or torn publish shows up as a mismatch because the stream's
+   period does not divide the ring size -- unlike the 0,1,2.. pattern in
+   test_stream, which would alias across laps.
+
+   The harness ASSERT is not thread-safe (g_checks++ is unsynchronized), so
+   workers record into SpscCtx and only main() asserts, after joining.
+
+   Caveat: a pass on x64 is necessary, not sufficient -- the hardware can't
+   produce most acquire/release violations. The pthread branch below exists
+   so this same file runs under `clang -fsanitize=thread` on Linux/WSL,
+   which checks the reasoning, not just the outcome. */
+
+#ifdef _WIN32
+    #include <process.h>   /* _beginthreadex; windows.h already in via impl */
+    typedef HANDLE test_thread;
+    #define THREAD_FN(name) static unsigned __stdcall name(void* arg)
+    #define THREAD_RETURN() return 0
+    static test_thread test_thread_start(unsigned (__stdcall *fn)(void*), void* arg)
+    {
+        return (test_thread)_beginthreadex(NULL, 0, fn, arg, 0, NULL);
+    }
+    static void test_thread_join(test_thread t)
+    {
+        WaitForSingleObject(t, INFINITE);
+        CloseHandle(t);
+    }
+    static void test_thread_yield(void) { SwitchToThread(); }
+#else
+    #include <pthread.h>
+    #include <sched.h>
+    typedef pthread_t test_thread;
+    #define THREAD_FN(name) static void* name(void* arg)
+    #define THREAD_RETURN() return NULL
+    typedef void* (*test_thread_entry)(void*);
+    static test_thread test_thread_start(test_thread_entry fn, void* arg)
+    {
+        pthread_t t;
+        pthread_create(&t, NULL, fn, arg);
+        return t;
+    }
+    static void test_thread_join(test_thread t) { pthread_join(t, NULL); }
+    static void test_thread_yield(void) { sched_yield(); }
+#endif
+
+static u64 xorshift64(u64* s)
+{
+    u64 x = *s;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *s = x;
+    return x;
+}
+
+#define SPSC_DATA_SEED  0x9E3779B97F4A7C15ull  /* shared: producer emits, consumer expects */
+#define SPSC_MAX_CHUNK  4096
+
+typedef struct SpscCtx
+{
+    RingBuffer* rb;
+    u64 total;      /* bytes to move */
+    u64 chunk_seed; /* per-thread: chunk-size sequence */
+    /* results, written by the worker, read by main after join */
+    u64 moved;
+    b8  ok;
+    u64 fail_pos;
+    u8  fail_got;
+    u8  fail_want;
+} SpscCtx;
+
+THREAD_FN(spsc_producer)
+{
+    SpscCtx* ctx = (SpscCtx*)arg;
+    u64 data      = SPSC_DATA_SEED;
+    u64 chunk_rng = ctx->chunk_seed;
+    u8  buf[SPSC_MAX_CHUNK];
+
+    while (ctx->moved < ctx->total)
+    {
+        u64 chunk = 1 + (xorshift64(&chunk_rng) % SPSC_MAX_CHUNK);
+        if (ctx->moved + chunk > ctx->total) chunk = ctx->total - ctx->moved;
+
+        /* generate BEFORE the write attempt: the stream position must advance
+           exactly once per byte moved, even across retries */
+        for (u64 i = 0; i < chunk; ++i) buf[i] = (u8)xorshift64(&data);
+
+        /* full ring: spin until the consumer frees space */
+        while (!ring_buffer_write(ctx->rb, buf, chunk))
+            test_thread_yield();
+
+        ctx->moved += chunk;
+    }
+    THREAD_RETURN();
+}
+
+THREAD_FN(spsc_consumer)
+{
+    SpscCtx* ctx = (SpscCtx*)arg;
+    u64 expect    = SPSC_DATA_SEED;
+    u64 chunk_rng = ctx->chunk_seed;
+    u8  buf[SPSC_MAX_CHUNK];
+
+    ctx->ok = true;
+
+    while (ctx->moved < ctx->total)
+    {
+        u64 want = 1 + (xorshift64(&chunk_rng) % SPSC_MAX_CHUNK);
+        if (ctx->moved + want > ctx->total) want = ctx->total - ctx->moved;
+
+        /* alternate the copying and zero-copy consume paths */
+        const u8* got  = NULL;
+        u64       held = 0;   /* nonzero: bytes held via peek, advance after verify */
+
+        if (xorshift64(&chunk_rng) & 1)
+        {
+            bytes_view v = ring_buffer_peek(ctx->rb, want);
+            if (!v.size) { test_thread_yield(); continue; }
+            got  = v.data;
+            held = v.size;
+        }
+        else
+        {
+            if (!ring_buffer_read(ctx->rb, buf, want)) { test_thread_yield(); continue; }
+            got = buf;
+        }
+
+        for (u64 i = 0; i < want; ++i)
+        {
+            u8 w = (u8)xorshift64(&expect);
+            if (got[i] != w && ctx->ok)   /* record only the first mismatch */
+            {
+                ctx->ok        = false;
+                ctx->fail_pos  = ctx->moved + i;
+                ctx->fail_got  = got[i];
+                ctx->fail_want = w;
+            }
+        }
+
+        /* verify BEFORE advancing: the view dies at advance_read */
+        if (held) ring_buffer_advance_read(ctx->rb, held);
+
+        ctx->moved += want;
+    }
+    THREAD_RETURN();
+}
+
+static void test_spsc_stress(void)
+{
+    SECTION("ring: SPSC stress -- two threads, random chunks, byte-exact PRNG stream");
+
+    RingBuffer rb = ring_buffer_alloc(KB(64));
+
+    SpscCtx p = {0};
+    SpscCtx c = {0};
+    p.rb = &rb;  p.total = rb.size * 512 + 123;  p.chunk_seed = 0xBADC0FFEE0DDF00Dull;
+    c.rb = &rb;  c.total = p.total;              c.chunk_seed = 0x0123456789ABCDEFull;
+
+    test_thread tc = test_thread_start(spsc_consumer, &c);
+    test_thread tp = test_thread_start(spsc_producer, &p);
+    test_thread_join(tp);
+    test_thread_join(tc);
+
+    ASSERT(p.moved == p.total);
+    ASSERT(c.moved == c.total);
+    ASSERT(c.ok);
+    if (!c.ok)
+        fprintf(stderr, "  first mismatch at byte %llu: got 0x%02X want 0x%02X\n",
+                (unsigned long long)c.fail_pos, c.fail_got, c.fail_want);
+
+    ring_buffer_release(&rb);
+}
+
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"mirror",          test_mirror},
@@ -309,6 +485,7 @@ static TestCase g_cases[] = {
     {"guards",          test_guards},
     {"stream",          test_stream},
     {"counter_wrap",    test_counter_wrap},
+    {"spsc_stress",     test_spsc_stress},
 };
 
 int main(int argc, char** argv)

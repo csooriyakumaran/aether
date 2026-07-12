@@ -41,6 +41,10 @@
 #include <stdio.h>
 #include <stddef.h>
 
+#ifdef _MSC_VER
+    #include <intrin.h> /* for atmoics */
+#endif // _MSC_VER
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -191,6 +195,35 @@ typedef struct bytes      {       u8* data; u64 size; } bytes;
 typedef struct bytes_view { const u8* data; u64 size; } bytes_view;
 
 static  inline bytes_view view_from_bytes(bytes b) { bytes_view v = {b.data, b.size}; return v; }
+
+/*-------- A T O M I C S  ----------------------------------------------------*/
+
+AETHER_STATIC_ASSERT(sizeof(void*) == 8, "aether atomics require a 64-bit target");
+
+static inline u64 atomic_load_acq_u64(const u64* p)
+{
+#if defined(_MSC_VER) && defined(_M_X64)
+    u64 v = (u64)__iso_volatile_load64((const volatile __int64*)p);
+    _ReadWriteBarrier();
+    return v;
+#elif defined(__GNUC__) || defined(__clang__)
+    return __atomic_load_n(p, __ATOMIC_ACQUIRE);
+#else
+    #error "aether atomics: load-acquire not implemented for this compiler"
+#endif 
+}
+
+static inline void atomic_store_rel_u64(u64* p, u64 v)
+{
+#if defined(_MSC_VER) && defined(_M_X64)
+    _ReadWriteBarrier();
+    __iso_volatile_store64((volatile __int64*)p, (__int64)v);
+#elif defined(__GNUC__) || defined(__clang__)
+    __atomic_store_n(p, v, __ATOMIC_RELEASE);
+#else
+    #error "aether atomics: store-release not implemented for this compiler"
+#endif 
+}
 
 /*----------------------------------------------------------------------------*/
 
@@ -433,7 +466,6 @@ void         high_res_timer_release(HighResTimer* t);
 #include <stdarg.h>
 #include <stdlib.h> /* for str8_to_f64 */
 #include <errno.h>  /* for str8_to_f64 */
-
 
 /*---------------------------------------------------------------------------*/
 /* --- P L A T F O R M ----------------------------------------------------- */
@@ -1105,7 +1137,9 @@ void ring_buffer_release(RingBuffer* rb)
 u64 ring_buffer_available(RingBuffer* rb)
 {
     if (!rb || !rb->base) return 0;
-    return rb->write - rb->read;
+    u64 read  = atomic_load_acq_u64(&rb->read);
+    u64 write = atomic_load_acq_u64(&rb->write);
+    return write - read;
 }
 
 b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len)
@@ -1124,20 +1158,30 @@ b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len)
 {
     if (!rb || !rb->base) return false;
     if (len > rb->size ) return false;
-    /* reject if it will overwrite unread data */
-    if (len > rb->size - (rb->write - rb->read)) return false;
 
-    u64 write_idx = rb->write & (rb->size - 1);
-    memcpy(rb->base + write_idx, src, len);
-    rb->write += len;
+    u64 read  = atomic_load_acq_u64(&rb->read);
+    u64 write = rb->write;
+
+    /* reject if it will overwrite unread data */
+    if (len > rb->size - (write - read)) return false;
+
+    memcpy(rb->base + (write & (rb->size - 1)), src, len);
+
+    atomic_store_rel_u64(&rb->write, write + len);
     return true;
 }
 
 b8  ring_buffer_advance_read(RingBuffer* rb, u64 len)
 {
     if (!rb || !rb->base) return false;
-    if (len > rb->write - rb->read) return false;
-    rb->read += len;
+
+    u64 write = atomic_load_acq_u64(&rb->write);
+    u64 read  = rb->read;
+
+    if (len > write - read) return false;
+
+    atomic_store_rel_u64(&rb->read, read + len);
+
     return true;
 }
 
@@ -1146,14 +1190,13 @@ bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
     bytes_view v = {0};
     if (!rb || !rb->base) return v;
 
-    u64 available = rb->write - rb->read;
+    u64 write = atomic_load_acq_u64(&rb->write);
+    u64 read  = rb->read;
 
-    if (len <= available)
+    if (len <= write - read)
     {
-        u64 read_idx = rb->read & (rb->size - 1);
-        v.data = rb->base + read_idx;
+        v.data = rb->base + (read & (rb->size - 1));
         v.size = len;
-        return v;
     }
     return v;
 }
