@@ -14,7 +14,8 @@ It provides a minimal set of common primitives:
 - memory arenas (linear allocator with scratch / temporary support)
 - file I/O (read a file into an arena, write a byte span to a path)
 - memory-mapped files
-- ring / circular buffers (virtually-mirrored — reads and writes that wrap the end stay a single contiguous copy)
+- atomics (64-bit acquire-load / release-store)
+- ring / circular buffers (virtually-mirrored — reads and writes that wrap the end stay a single contiguous copy; safe across one producer and one consumer thread)
 - timing helpers
 
 The intent is not to be a framework, but rather a lightweight foundation that can be included in other libraries or applications. The motivation is to share primitives between different aerodynamic solver codes.
@@ -361,9 +362,22 @@ void string_example(void)
 }
 ```
 
+## Atomics
+
+AETHER provides a minimal pair of 64-bit atomic operations with explicit memory ordering, `static inline` in the header:
+
+```c
+u64  atomic_load_acq_u64 (const u64* p);   /* load with acquire ordering  */
+void atomic_store_rel_u64(u64* p, u64 v);  /* store with release ordering */
+```
+
+A release store makes every memory operation before it visible before the store itself; an acquire load that observes the stored value is guaranteed to also observe everything the storing thread did first. This pairing is the building block for publish/consume patterns between two threads — it is what `RingBuffer` uses internally for its single-producer/single-consumer guarantee, and it is the right tool for simple cross-thread signals (a stop flag, a mode word) where a lock would be overkill.
+
+The implementation sits on compiler intrinsics (MSVC x64; `__atomic` builtins on GCC/Clang), so there is no `<stdatomic.h>` / `<atomic>` dependency and the same functions compile as both C and C++. A 64-bit target is required and enforced with a compile-time assert.
+
 ## Ring Buffers
 
-AETHER provides a fixed-capacity **ring (circular) buffer** for byte streams — a single-producer / single-consumer FIFO useful for pipes, logging, and telemetry.
+AETHER provides a fixed-capacity **ring (circular) buffer** for byte streams — a single-producer / single-consumer FIFO that is safe across two threads without locks, useful for pipes, logging, and telemetry.
 
 It uses the *virtually-mirrored* (a.k.a. "magic") layout: the buffer reserves twice its capacity of address space and maps the **same physical pages** into both halves. A read or write that crosses the end of the buffer therefore wraps automatically, so any span up to the full capacity is always a **single `memcpy`** and `ring_buffer_peek` can hand back **one contiguous view even when the data straddles the seam** — no split-at-the-boundary bookkeeping.
 
@@ -440,7 +454,7 @@ if (v.size)
 Two things make this safe and convenient:
 
 - **One `send()` covers wrapped data.** `peek` returns a *single contiguous* span even when the logical bytes straddle the seam (the mirror), so there is never any need for scatter/gather (`iovec`) to handle the wrap.
-- **The span stays valid for the whole call.** The producer can never write past the read cursor, and you do not advance `read` until *after* `send()` returns — so the producer cannot overwrite the in-flight bytes. Advancing by the returned count (not by what you peeked) also handles partial sends correctly.
+- **The span stays valid for the whole call.** The producer can never write past the read cursor, and you do not advance `read` until *after* `send()` returns — so the producer cannot overwrite the in-flight bytes. Advancing by the returned count (not by what you peeked) also handles partial sends correctly. The general rule: a peeked view is valid only until the matching `advance_read` — after that the producer may overwrite those bytes, so never touch a view past that point.
 
 > [!NOTE]
-> The buffer is **not** thread-safe on its own. It is sized for a single producer and single consumer; concurrent access needs external synchronization (or the lock-free SPSC discipline of one writer touching `write` and one reader touching `read`).
+> The buffer is thread-safe for **exactly one producer thread and one consumer thread** — the `read`/`write` cursors are published with acquire/release atomics, so this pairing needs no external locking. More than one producer or more than one consumer requires external synchronization.

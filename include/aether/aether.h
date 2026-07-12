@@ -42,7 +42,7 @@
 #include <stddef.h>
 
 #ifdef _MSC_VER
-    #include <intrin.h> /* for atmoics */
+    #include <intrin.h> /* for atomics */
 #endif // _MSC_VER
 
 #ifdef __cplusplus
@@ -307,6 +307,11 @@ ArenaTemp arena_begin_temp(Arena* arena);
 void      arena_end_temp(ArenaTemp temp);
 
 /* -------- R I N G / C I R C U L A R - B U F F E R S ---------------------- */
+
+/* - Ring buffers are safe for exactly one producer thread and one consumer thread
+ *   more of either requires external synchronization
+ * - peaked views become invalid after the matching advance_read */
+
 typedef struct RingBuffer
 {
     u8* base;

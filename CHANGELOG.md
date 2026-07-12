@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - `bytes_from_str8`: converts a `str8_view` to a `bytes_view`. e.g.; `file_write(path, bytes_from_str8(view_from_str8(s)))` for an arena-backed `str8`, or `bytes_from_str8(STR("Literal"))` directly.
+- Atomics (new public section):`atomic_load_acq_u64`/`atomic_store_rel_u64` - acquire/release semantics, static inline in the header. MSCV x64 and GCC.clang; 64-bit targets enforced at compile time.
+
+### Fixed
+- `RingBuffer` is now actually safe for its documented single-producer/single-consumer use: the `read`/`write` counters are published with acquire/release atomics. Previously they wereplain `u64` accssess, so cross-thread use was a data race - the write index could become visible before the bytes it covers, or a region could be reused before the consumer finished reading it. Contract now explicit: exactly one producer thread and one consumer thread; a `ring_buffer_peek` view is invalid after the matching `ring_buffer_advance_read`. Covered by a new two-thread stress case (`spcs_stress`) in `tests/test_ring.c`.
 
 ## [0.0.12] - 2026-07-10
 
