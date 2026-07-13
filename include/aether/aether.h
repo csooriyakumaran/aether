@@ -384,6 +384,7 @@ typedef struct bytes      {       u8* data; u64 size; } bytes;
 typedef struct bytes_view { const u8* data; u64 size; } bytes_view;
 
 static  inline bytes_view view_from_bytes(bytes b) { bytes_view v = {b.data, b.size}; return v; }
+static  inline bytes_view view_from_raw(const void* data, u64 size) { bytes_view v = {(const u8*)data, size}; return v; }
 
 /*-------- A T O M I C S  ----------------------------------------------------*/
 
@@ -545,11 +546,8 @@ typedef bytes_view str8_view;
 typedef struct str16      {       u16* data; u64  size; } str16;
 typedef struct str16_view { const u16* data; u64  size; } str16_view;
 
-static  inline str8_view  view_from_raw(const void* data, u64 size) { str8_view v = {(const u8*)data, size}; return v; }
-static  inline str8_view  view_from_str8(str8 s)   { str8_view  v = {s.data, s.size}; return v; }
+static  inline str8_view  view_from_str8(str8 s)   { str8_view   v = {s.data, s.size}; return v; }
 static  inline str16_view view_from_str16(str16 s) { str16_view  v = {s.data, s.size}; return v; }
-
-static  inline bytes_view bytes_view_from_str8_view(str8_view s) { bytes_view v = {s.data, s.size}; return v; }
 
 #define STR(s) (AETHER_LITERAL(str8_view){ (const u8*)(s), sizeof(s) - 1 }) /*STRING LITERALS ONLY: decays silently on pointers */
 
