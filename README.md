@@ -22,7 +22,27 @@ The intent is not to be a framework, but rather a lightweight foundation that ca
 
 ## Requirements
 
-Single-header with no link-time dependencies. Requires **C11** or **C++11** (newer standards work too).
+Single-header with no link-time dependencies. Requires **C11** or **C++11** (newer standards work too; on MSVC in C mode, pass `/std:c11` or later — the default MSVC C mode predates `_Static_assert`). Currently **Windows-only** and **64-bit only** (x64 or ARM64) — both enforced at compile time with clear `#error` messages.
+
+## Integration
+
+aether is a single-header library in the stb style. Include it wherever it is needed; in **exactly one** C or C++ file, define `AETHER_IMPLEMENTATION` first to compile the function bodies:
+
+```c
+#define AETHER_IMPLEMENTATION
+#include "aether/aether.h"
+```
+
+Linkage is controlled by defines set before the include (consistently in every TU):
+
+| DEFINE               | EFFECT                                                                                              |
+| -------------------- | ---------------------------------------------------------------------------------------------------- |
+| *(none)*             | API functions are `extern`; exactly one TU defines `AETHER_IMPLEMENTATION`.                          |
+| `AETHER_STATIC`      | API becomes `static` (private to the TU). Requires `AETHER_IMPLEMENTATION` in the **same** file.     |
+| `AETHER_BUILD_DLL`   | Building aether as a shared library — define together with `AETHER_IMPLEMENTATION`; exports the API. |
+| `AETHER_DLL`         | Consuming aether as a shared library; imports the API. Do not define `AETHER_IMPLEMENTATION`.        |
+
+Conflicting combinations fail at compile time. See the header preamble for the config defines (`AETHER_BUILD_DEBUG`, `AETHER_ENABLE_ASSERTS`) and the `AETHER_NO_*` opt-outs.
 
 ## Memory Arenas
 
@@ -31,7 +51,7 @@ AETHER provides a simple linear arena allocator.
 An arena reserves a block of virtual address space and commits memory as needed. Allocations are performed by bumping a position pointer forward. Individual allocations are not freed; instead, memory is reclaimed in bulk by popping, clearing, or releasing the arena. 
 
 > [!NOTE]
-> Reservation and commit failures (e.g. out of memory) are treated as fatal and abort the program immediately — there is no recoverable error path.
+> Reservation and commit failures (e.g. out of memory) are treated as fatal and abort the program immediately — there is no recoverable error path. Arena-allocating string functions treat arena exhaustion the same way; `arena_push` itself returns `NULL` on overflow for callers that can recover.
 
 ```c
 /* reserve 64 MB of virtual address space.
@@ -129,7 +149,7 @@ void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero);
 void* memory = arena_push(arena, size, alignment, ArenaZero_Force);
 ```
 
- Convenience macros are provided for common typed and array allocations. Default alignment is an 8-byte boundary. The `zero` argument is an `ArenaZero`, not a plain bool:
+ Convenience macros are provided for common typed and array allocations. The macros align each allocation to the type's natural alignment (`alignof(T)`). The `zero` argument is an `ArenaZero`, not a plain bool:
  - `ArenaZero_FollowPolicy` (the default macros) — zeroed only if `ArenaFlags_AlwaysZero` is set on the arena (the default in debug builds).
  - `ArenaZero_Force` (the `_zero` variants) — always zeroed, regardless of policy.
  - `ArenaZero_Never` (the `_nozero` variants) — never zeroed, even if `ArenaFlags_AlwaysZero` is set.
@@ -237,8 +257,9 @@ No individual deallocation is required. The file bytes live in the arena, so onc
 ```c
 str8 report = str8_push_fmt(arena, "residual = %e\n", residual);
 
-bytes_view out = bytes_from_str8(view_from_str8(report));
-if (file_write("report.txt", out) != out.size)
+/* str8_view and bytes_view are the same type, so a string view
+   can be handed to file_write directly */
+if (file_write("report.txt", view_from_str8(report)) != report.size)
 {
     fprintf(stderr, "could not write report.txt\n");
 }
@@ -373,7 +394,7 @@ void atomic_store_rel_u64(u64* p, u64 v);  /* store with release ordering */
 
 A release store makes every memory operation before it visible before the store itself; an acquire load that observes the stored value is guaranteed to also observe everything the storing thread did first. This pairing is the building block for publish/consume patterns between two threads — it is what `RingBuffer` uses internally for its single-producer/single-consumer guarantee, and it is the right tool for simple cross-thread signals (a stop flag, a mode word) where a lock would be overkill.
 
-The implementation sits on compiler intrinsics (MSVC x64; `__atomic` builtins on GCC/Clang), so there is no `<stdatomic.h>` / `<atomic>` dependency and the same functions compile as both C and C++. A 64-bit target is required and enforced with a compile-time assert.
+The implementation sits on compiler intrinsics (`__iso_volatile` loads/stores plus a per-arch barrier on MSVC x64/ARM64; `__atomic` builtins on GCC/Clang), so there is no `<stdatomic.h>` / `<atomic>` dependency and the same functions compile as both C and C++. A 64-bit target is required and enforced with a compile-time assert.
 
 ## Ring Buffers
 
@@ -382,7 +403,7 @@ AETHER provides a fixed-capacity **ring (circular) buffer** for byte streams —
 It uses the *virtually-mirrored* (a.k.a. "magic") layout: the buffer reserves twice its capacity of address space and maps the **same physical pages** into both halves. A read or write that crosses the end of the buffer therefore wraps automatically, so any span up to the full capacity is always a **single `memcpy`** and `ring_buffer_peek` can hand back **one contiguous view even when the data straddles the seam** — no split-at-the-boundary bookkeeping.
 
 > [!NOTE]
-> Ring buffers are currently Windows-only and require Windows 10 version 1803 or newer (`VirtualAlloc2` / `MapViewOfFile3`). These are resolved at runtime, so there is **no extra link dependency** — but on an older OS the entry points are unavailable and `ring_buffer_alloc` **panics** (`FATAL`) like any other allocation failure. Gate the call yourself if you need to degrade gracefully on those platforms.
+> Ring buffers require Windows 10 version 1803 or newer (`VirtualAlloc2` / `MapViewOfFile3`). These are resolved at runtime, so there is **no extra link dependency** — but on an older OS the entry points are unavailable and `ring_buffer_alloc` **panics** (`FATAL`) like any other allocation failure. Gate the call yourself if you need to degrade gracefully on those platforms.
 
 The requested capacity is rounded up to a power of two that is at least the OS allocation granularity (64 KiB on Windows). This keeps index wrapping a cheap mask and satisfies the placeholder-mapping alignment rules.
 
@@ -405,7 +426,7 @@ The requested capacity is rounded up to a power of two that is at least the OS a
 | `ring_buffer_available`    | Bytes currently ready to read (`write - read`).                                              |
 | `ring_buffer_write`        | Copy `len` bytes in. Rejects (returns `false`) if `len` exceeds free space or total capacity. |
 | `ring_buffer_peek`         | Return a contiguous `bytes_view` of `len` bytes **without** consuming. `{0}` if `len` unavailable. |
-| `ring_buffer_read`         | Copy `len` bytes out and advance the read cursor. Returns `false` if `len` unavailable.       |
+| `ring_buffer_read`         | Copy `len` bytes out and advance the read cursor. Returns `false` if `len` unavailable; `len == 0` succeeds as a no-op. |
 | `ring_buffer_advance_read` | Advance the read cursor by `len` **without** copying (zero-copy consume). `false` if `len` exceeds available. |
 | `ring_buffer_release`      | Unmap both views, free the reservation, and zero the struct.                                 |
 

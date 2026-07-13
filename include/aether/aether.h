@@ -26,60 +26,249 @@
   #define AETHER_IMPLEMENTATION
   #include "aether/aether.h"
 
+  LINKAGE DEFINES
+  --------------
+
+  - AETHER_STATIC             API functions become static (private to the TU)
+                              Requires AETHER_IMPLEMENTATION in the *same* file;
+                              no other TU can use the library.
+  - AETHER_BUILD_DLL          building aether as a shared library. Define together
+                              with AETHER_IMPLEMENTATION in the DLL's TU; marks the
+                              API dllexport (visibility("default") on POSIX)
+  - AETHER_DLL                consuming aether as a shared library; marks the API
+                              dllimport. Do not define AETHER_IMPLEMENTATION.
+
+  CONFIG DEFINES
+  --------------
+
+  - AETHER_BUILD_DEBUG=0|1    force debug/release behaviour
+                              (default: 1 unless NDEBUG is defined)
+  - AETHER_ENABLE_ASSERTS=0|1 force asserts on/off
+                              (default: AETHER_BUILD_DEBUG)
+
   OPTIONAL OPT-OUT DEFINES
   ------------------------
 
-  - AETHER_NO_MINMAX:       skips defining MIN/MAX if not already defined
-  - AETHER_NO_ASSERT:       skips defining ASSERT if not already defined
-  - AETHER_NO_ARRAY_COUNT:  skips defining ARRAY_COUNT if not already defined
-  - AETHER_NO_NUMERIC_LIMITS: skips defining MIN/MAX for I8/I16/I32/I64/U8/U16/U32/U64
+  - AETHER_NO_MINMAX:          skips defining MIN/MAX if not already defined
+  - AETHER_NO_ASSERT:          skips defining ASSERT if not already defined
+  - AETHER_NO_ARRAY_COUNT:     skips defining ARRAY_COUNT if not already defined
+  - AETHER_NO_NUMERIC_LIMITS:  skips defining *_MIN / *_MAX-style limits
+                               e.g., for I8/I16/I32/I64/U8/U16/U32/U64
 
 \*---------------------------------------------------------------------------*/
 #ifndef AETHER_H_
 #define AETHER_H_
 
+/*-------- C O N T E X T ----------------------------------------------------*/
+
+// COMPILER
+#if defined(__clang__)
+    #define AETHER_COMPILER_CLANG 1
+#elif defined(_MSC_VER)
+    #define AETHER_COMPILER_MSVC 1
+#elif defined(__GNUC__)
+    #define AETHER_COMPILER_GCC 1
+#endif 
+
+#if !defined(AETHER_COMPILER_MSVC)
+    #define AETHER_COMPILER_MSVC 0
+#endif
+#if !defined(AETHER_COMPILER_GCC)
+    #define AETHER_COMPILER_GCC 0
+#endif
+#if !defined(AETHER_COMPILER_CLANG)
+    #define AETHER_COMPILER_CLANG 0
+#endif
+
+#if !(AETHER_COMPILER_MSVC || AETHER_COMPILER_CLANG || AETHER_COMPILER_GCC)
+    #error "AETHER: unsupported compiler"
+#endif
+
+// OS
+#if defined(_WIN32)
+    #define AETHER_OS_WINDOWS 1
+#elif defined(__APPLE__) && defined(__MACH__)
+    #include <TargetConditionals.h>
+    #if TARGET_OS_MAC
+        #define AETHER_OS_MAC 1
+    #endif
+#elif defined(__linux__)
+    #define AETHER_OS_LINUX 1
+    #if defined(__ANDROID__)
+        #define AETHER_OS_ANDROID 1
+    #endif
+#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    #define AETHER_OS_BSD 1
+#endif
+
+#if !defined(AETHER_OS_WINDOWS)
+    #define AETHER_OS_WINDOWS 0
+#endif
+#if !defined(AETHER_OS_MAC)
+    #define AETHER_OS_MAC 0
+#endif
+#if !defined(AETHER_OS_LINUX)
+    #define AETHER_OS_LINUX 0
+#endif
+#if !defined(AETHER_OS_ANDROID)
+    #define AETHER_OS_ANDROID 0
+#endif
+#if !defined(AETHER_OS_BSD)
+    #define AETHER_OS_BSD 0
+#endif
+
+#define AETHER_OS_POSIX (AETHER_OS_MAC || AETHER_OS_LINUX || AETHER_OS_BSD)
+
+#if !(AETHER_OS_WINDOWS || AETHER_OS_LINUX || AETHER_OS_MAC || AETHER_OS_BSD)
+    #error "AETHER: unsupported os"
+#endif
+
+// ARCH
+#if AETHER_COMPILER_MSVC
+    #if defined(_M_X64)
+        #define AETHER_ARCH_X64 1
+    #elif defined (_M_ARM64)
+        #define AETHER_ARCH_ARM64 1
+    #elif defined (_M_IX86)
+        #define AETHER_ARCH_X86 1
+    #endif
+#elif AETHER_COMPILER_CLANG || AETHER_COMPILER_GCC
+    #if defined(__x86_64__)
+        #define AETHER_ARCH_X64 1
+    #elif defined(__aarch64__)
+        #define AETHER_ARCH_ARM64 1
+    #elif defined(__i386__)
+        #define AETHER_ARCH_X86 1
+    #endif
+#endif
+
+#if !defined(AETHER_ARCH_X64)
+    #define AETHER_ARCH_X64 0
+#endif
+#if !defined(AETHER_ARCH_ARM64)
+    #define AETHER_ARCH_ARM64 0
+#endif
+#if !defined(AETHER_ARCH_X86)
+    #define AETHER_ARCH_X86 0
+#endif 
+
+#if !(AETHER_ARCH_X64 || AETHER_ARCH_ARM64 || AETHER_ARCH_X86)
+    #error "AETHER: unsupported architecture"
+#endif
+
+// LANG
+#if defined(__cplusplus)
+    #define AETHER_LANG_CPP 1
+    #define AETHER_LANG_C 0
+#else
+    #define AETHER_LANG_C 1
+    #define AETHER_LANG_CPP 0
+#endif
+
+#if AETHER_LANG_C && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
+    #define AETHER_LANG_C23 1
+#else
+    #define AETHER_LANG_C23 0
+#endif
+
+// BUILD
+#ifndef AETHER_BUILD_DEBUG
+    #if !defined(NDEBUG)
+        #define AETHER_BUILD_DEBUG 1
+    #else
+        #define AETHER_BUILD_DEBUG 0
+    #endif
+#endif // AETHER_BUILD_DEBUG
+
+#if defined(AETHER_STATIC) && defined(AETHER_DLL)
+    #error "AETHER_STATIC and AETHER_DLL are mutually exclusive"
+#endif
+
+#if defined(AETHER_STATIC) && defined(AETHER_BUILD_DLL)
+    #error "AETHER_STATIC and AETHER_BUILD_DLL are mutually exclusive"
+#endif
+
+#if defined(AETHER_IMPLEMENTATION) && defined(AETHER_DLL) && !defined(AETHER_BUILD_DLL)
+    #error "Cannot compile the implementation in DLL-import mode; define AETHER_BUILD_DLL"
+#endif
+
+#if AETHER_OS_WINDOWS
+    #define AETHER_DLL_EXPORT __declspec(dllexport)
+    #define AETHER_DLL_IMPORT __declspec(dllimport)
+#else
+    #define AETHER_DLL_EXPORT __attribute__((visibility("default")))
+    #define AETHER_DLL_IMPORT extern
+#endif
+
+#if defined(AETHER_BUILD_DLL)
+    #define AETHER_API AETHER_DLL_EXPORT
+#elif defined(AETHER_DLL)
+    #define AETHER_API AETHER_DLL_IMPORT
+#elif defined(AETHER_STATIC)
+    #define AETHER_API static
+#else
+    #define AETHER_API extern
+#endif
+
+
+/*---------------------------------------------------------------------------*/
+
+#if !AETHER_OS_WINDOWS
+    #error "AETHER: Currently only supports Windows"
+#endif 
+
+#if !(AETHER_ARCH_X64 || AETHER_ARCH_ARM64)
+    #error "AETHER: unsupported architecture (64-bit x64/arm64 required)"
+#endif
+
+/*---------------------------------------------------------------------------*/
+
+#define internal      static
+#define global        static
+#define local_persist static
+
 #include <stdio.h>
 #include <stddef.h>
 
-#ifdef _MSC_VER
+#if AETHER_COMPILER_MSVC
     #include <intrin.h> /* for atomics */
-#endif // _MSC_VER
+#endif // AETHER_COMPILER_MSVC
 
-#ifdef __cplusplus
+#if AETHER_LANG_CPP
 extern "C"
 {
-#endif // __cplusplus
+#endif // AETHER_LANG_CPP
 
 /*-------- C O N F I G -------------------------------------------------------*/
 
-#if defined(_MSC_VER)
+#if AETHER_COMPILER_MSVC
     #define AETHER_DEBUG_BREAK() __debugbreak()
 #else
     #define AETHER_DEBUG_BREAK() __builtin_trap()
-#endif // _MSC_VER
+#endif // AETHER_COMPILER_MSVC
 
-#if defined(__cplusplus)
+#if AETHER_LANG_CPP
     #define ARENA_ALIGN(T) alignof(T)
 #else
     #define ARENA_ALIGN(T) _Alignof(T)
-#endif // __cplusplus
+#endif // AETHER_LANG_CPP
 
-#if defined(__cplusplus)
+#if AETHER_LANG_CPP
     #define AETHER_LITERAL(T) T
 #else
     #define AETHER_LITERAL(T) (T)
-#endif // __cplusplus
+#endif // AETHER_LANG_CPP
 
-#if defined(__cplusplus)
+#if AETHER_LANG_CPP
     #define AETHER_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
 #else
     #define AETHER_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg) /* C11 */
-#endif // __cplusplus
+#endif // AETHER_LANG_CPP
 
 /*----------------------------------------------------------------------------*/
 
 #ifndef AETHER_ENABLE_ASSERTS
-    #if defined(_DEBUG) || !defined(NDEBUG)
+    #if AETHER_BUILD_DEBUG
         #define AETHER_ENABLE_ASSERTS 1
     #else
         #define AETHER_ENABLE_ASSERTS 0
@@ -142,7 +331,7 @@ extern "C"
     #define U64_MAX AETHER_U64_MAX_
 #endif // AETHER_NO_NUMERIC_LIMITS
 
-#if !defined(__cplusplus) && (!defined(__STDC_VERSION__) || __STDC_VERSION__ < 202311L )
+#if AETHER_LANG_C && !AETHER_LANG_C23
     #ifndef true
     #define true 1
     #endif // true
@@ -200,28 +389,42 @@ static  inline bytes_view view_from_bytes(bytes b) { bytes_view v = {b.data, b.s
 
 AETHER_STATIC_ASSERT(sizeof(void*) == 8, "aether atomics require a 64-bit target");
 
+#if AETHER_COMPILER_GCC || AETHER_COMPILER_CLANG
+    #define AETHER_ATOMICS_GNU  1
+    #define AETHER_ATOMICS_MSVC 0
+#elif AETHER_COMPILER_MSVC && (AETHER_ARCH_X64 || AETHER_ARCH_ARM64)
+    #define AETHER_ATOMICS_GNU  0
+    #define AETHER_ATOMICS_MSVC 1
+#else
+    #error "AETHER atomics: unsupported compiler/architecture pair (GCC/Clang on any arch, or MSVC on x64/arm64)"
+#endif
+
+#if AETHER_ATOMICS_MSVC
+    #if AETHER_ARCH_X64
+        #define AETHER_MSVC_BARRIER_() _ReadWriteBarrier()
+    #else
+        #define AETHER_MSVC_BARRIER_() __dmb(0x0B)
+    #endif
+#endif
+
 static inline u64 atomic_load_acq_u64(const u64* p)
 {
-#if defined(_MSC_VER) && defined(_M_X64)
-    u64 v = (u64)__iso_volatile_load64((const volatile __int64*)p);
-    _ReadWriteBarrier();
-    return v;
-#elif defined(__GNUC__) || defined(__clang__)
+#if AETHER_ATOMICS_GNU
     return __atomic_load_n(p, __ATOMIC_ACQUIRE);
 #else
-    #error "aether atomics: load-acquire not implemented for this compiler"
+    u64 v = (u64)__iso_volatile_load64((const volatile __int64*)p);
+    AETHER_MSVC_BARRIER_();
+    return v;
 #endif 
 }
 
 static inline void atomic_store_rel_u64(u64* p, u64 v)
 {
-#if defined(_MSC_VER) && defined(_M_X64)
-    _ReadWriteBarrier();
-    __iso_volatile_store64((volatile __int64*)p, (__int64)v);
-#elif defined(__GNUC__) || defined(__clang__)
+#if AETHER_ATOMICS_GNU
     __atomic_store_n(p, v, __ATOMIC_RELEASE);
 #else
-    #error "aether atomics: store-release not implemented for this compiler"
+    AETHER_MSVC_BARRIER_();
+    __iso_volatile_store64((volatile __int64*)p, (__int64)v);
 #endif 
 }
 
@@ -270,13 +473,13 @@ typedef struct Arena {
 
 AETHER_STATIC_ASSERT(sizeof(Arena) <= AETHER_ARENA_HEADER_SIZE, "Arena header exceeds reserved header size");
 
-Arena* arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags);
-Arena* arena_alloc(u64 reserve_size);
-void   arena_release(Arena* arena);
-void*  arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero);
-void   arena_pop_to(Arena* arena, u64 pos);
-void   arena_pop(Arena* arena, u64 amt);
-void   arena_clear(Arena* arena);
+AETHER_API Arena* arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags);
+AETHER_API Arena* arena_alloc(u64 reserve_size);
+AETHER_API void   arena_release(Arena* arena);
+AETHER_API void*  arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero);
+AETHER_API void   arena_pop_to(Arena* arena, u64 pos);
+AETHER_API void   arena_pop(Arena* arena, u64 amt);
+AETHER_API void   arena_clear(Arena* arena);
 
 static inline void* arena_push_array_(Arena* arena, u64 elem_size, u64 align, u64 count, ArenaZero zero)
 {
@@ -303,14 +506,14 @@ typedef struct ArenaTemp {
     u64 pos;
 } ArenaTemp;
 
-ArenaTemp arena_begin_temp(Arena* arena);
-void      arena_end_temp(ArenaTemp temp);
+AETHER_API ArenaTemp arena_begin_temp(Arena* arena);
+AETHER_API void      arena_end_temp(ArenaTemp temp);
 
 /* -------- R I N G / C I R C U L A R - B U F F E R S ---------------------- */
 
 /* - Ring buffers are safe for exactly one producer thread and one consumer thread
  *   more of either requires external synchronization
- * - peaked views become invalid after the matching advance_read */
+ * - peeked views become invalid after the matching advance_read */
 
 typedef struct RingBuffer
 {
@@ -320,20 +523,20 @@ typedef struct RingBuffer
     u64 write;
 } RingBuffer;
 
-RingBuffer ring_buffer_alloc(u64 size);
-void       ring_buffer_release(RingBuffer* rb);
-u64        ring_buffer_available(RingBuffer* rb);
-b8         ring_buffer_read(RingBuffer* rb, void* dst, u64 len);
-b8         ring_buffer_write(RingBuffer* rb, const void* src, u64 len);
-b8         ring_buffer_advance_read(RingBuffer* rb, u64 len);
-bytes_view ring_buffer_peek(RingBuffer* rb, u64 len);
+AETHER_API RingBuffer ring_buffer_alloc(u64 size);
+AETHER_API void       ring_buffer_release(RingBuffer* rb);
+AETHER_API u64        ring_buffer_available(RingBuffer* rb);
+AETHER_API b8         ring_buffer_read(RingBuffer* rb, void* dst, u64 len);
+AETHER_API b8         ring_buffer_write(RingBuffer* rb, const void* src, u64 len);
+AETHER_API b8         ring_buffer_advance_read(RingBuffer* rb, u64 len);
+AETHER_API bytes_view ring_buffer_peek(RingBuffer* rb, u64 len);
 
 /*-------- S T R I N G S -----------------------------------------------------*/
 
 /* note(chris):
  *    - str8's pushed onto an arena will be nul-terminated by convention
  *    - nul-termination is not included in size
- *    - str8_view has no gaurantee of nul-termination
+ *    - str8_view has no guarantee of nul-termination
  */
 
 typedef bytes      str8;
@@ -346,9 +549,10 @@ static  inline str8_view  view_from_raw(const void* data, u64 size) { str8_view 
 static  inline str8_view  view_from_str8(str8 s)   { str8_view  v = {s.data, s.size}; return v; }
 static  inline str16_view view_from_str16(str16 s) { str16_view  v = {s.data, s.size}; return v; }
 
-static  inline bytes_view bytes_from_str8(str8_view s) { bytes_view v = {s.data, s.size}; return v; }
+static  inline bytes_view bytes_view_from_str8_view(str8_view s) { bytes_view v = {s.data, s.size}; return v; }
 
-#define STR(s) (AETHER_LITERAL(str8_view){ (const u8*)(s), sizeof(s) - 1 })
+#define STR(s) (AETHER_LITERAL(str8_view){ (const u8*)(s), sizeof(s) - 1 }) /*STRING LITERALS ONLY: decays silently on pointers */
+
 #define STR8_ARG(s) ((int)((s).size)), ((const char*)((s).data))
 #define STR8_FMT "%.*s"
 
@@ -381,51 +585,51 @@ enum Str8SplitFlags_
 };
 
 // --- construction --- 
-char*     c_str(Arena* arena, str8_view s);
-char*     c_str_push_copy(Arena* arena, const char* src);
-char*     c_str_push_fmt(Arena* arena, const char* fmt, ...);
+AETHER_API char*     c_str(Arena* arena, str8_view s);
+AETHER_API char*     c_str_push_copy(Arena* arena, const char* src);
+AETHER_API char*     c_str_push_fmt(Arena* arena, const char* fmt, ...);
 
-str8      str8_push_copy(Arena* arena, str8_view src);
-str8      str8_push_c_str(Arena* arena, const char* src);
-str8      str8_push_fmt(Arena* arena, const char* fmt, ...);
-str8      str8_concat(Arena* arena, str8_view a, str8_view b);
+AETHER_API str8      str8_push_copy(Arena* arena, str8_view src);
+AETHER_API str8      str8_push_c_str(Arena* arena, const char* src);
+AETHER_API str8      str8_push_fmt(Arena* arena, const char* fmt, ...);
+AETHER_API str8      str8_concat(Arena* arena, str8_view a, str8_view b);
 
 // --- view / slices --- (no allocation)
-str8_view view_from_c_str(const char* s);
-str8_view str8_slice(str8_view s, u64 start, u64 end);  /* return substr from [start, end) */
-str8_view str8_skip(str8_view s, u64 n);                /* skip first n characters */
-str8_view str8_drop(str8_view s, u64 n);                /* drop last n characters */
-str8_view str8_trim(str8_view s);                       /* trim whitespace from both end */
-str8_view str8_trim_left(str8_view s);                  /* trim whitespace from left */
-str8_view str8_trim_right(str8_view s);                 /* trim whitespace from right */
+AETHER_API str8_view view_from_c_str(const char* s);
+AETHER_API str8_view str8_slice(str8_view s, u64 start, u64 end);  /* return substr from [start, end) */
+AETHER_API str8_view str8_skip(str8_view s, u64 n);                /* skip first n characters */
+AETHER_API str8_view str8_drop(str8_view s, u64 n);                /* drop last n characters */
+AETHER_API str8_view str8_trim(str8_view s);                       /* trim whitespace from both ends */
+AETHER_API str8_view str8_trim_left(str8_view s);                  /* trim whitespace from left */
+AETHER_API str8_view str8_trim_right(str8_view s);                 /* trim whitespace from right */
 
 // --- queries ---       (no allocation)
-b8        str8_eq(str8_view a, str8_view b);
-b8        str8_eq_nocase(str8_view a, str8_view b);
-b8        str8_has_prefix(str8_view s, str8_view prefix);
-b8        str8_has_suffix(str8_view s, str8_view suffix);
-b8        str8_find(str8_view s, str8_view needle, u64* pos);
-b8        str8_find_last(str8_view s, str8_view needle, u64* pos);
-b8        str8_find_char(str8_view s, u8 c, u64* pos);
-i32       str8_cmp(str8_view a, str8_view b); /* memcmp-style ordering */
+AETHER_API b8        str8_eq(str8_view a, str8_view b);
+AETHER_API b8        str8_eq_nocase(str8_view a, str8_view b);
+AETHER_API b8        str8_has_prefix(str8_view s, str8_view prefix);
+AETHER_API b8        str8_has_suffix(str8_view s, str8_view suffix);
+AETHER_API b8        str8_find(str8_view s, str8_view needle, u64* pos);
+AETHER_API b8        str8_find_last(str8_view s, str8_view needle, u64* pos);
+AETHER_API b8        str8_find_char(str8_view s, u8 c, u64* pos);
+AETHER_API i32       str8_cmp(str8_view a, str8_view b); /* memcmp-style ordering */
 
 // --- cut / split / list / join --- 
-b8        str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after);
-Str8List  str8_split(Arena* arena, str8_view s, str8_view sep, Str8SplitFlags flags);
-void      str8_list_push(Arena* arena, Str8List* list, str8_view v);
-void      str8_list_push_fmt(Arena* arena, Str8List* list, const char* fmt, ...);
-str8      str8_join(Arena* arena, Str8List*list, str8_view sep);
-Str8Array str8_list_to_array(Arena* arena, Str8List* list);
+AETHER_API b8        str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after);
+AETHER_API Str8List  str8_split(Arena* arena, str8_view s, str8_view sep, Str8SplitFlags flags);
+AETHER_API void      str8_list_push(Arena* arena, Str8List* list, str8_view v);
+AETHER_API void      str8_list_push_fmt(Arena* arena, Str8List* list, const char* fmt, ...);
+AETHER_API str8      str8_join(Arena* arena, Str8List* list, str8_view sep);
+AETHER_API Str8Array str8_list_to_array(Arena* arena, Str8List* list);
 
 // --- transforms ---     (allocation)
-str8      str8_to_upper(Arena* arena, str8_view s);
-str8      str8_to_lower(Arena* arena, str8_view s);
-str8      str8_replace(Arena* arena, str8_view s, str8_view old, str8_view target); /* split + join*/
+AETHER_API str8      str8_to_upper(Arena* arena, str8_view s);
+AETHER_API str8      str8_to_lower(Arena* arena, str8_view s);
+AETHER_API str8      str8_replace(Arena* arena, str8_view s, str8_view old, str8_view target); /* split + join*/
 
 // --- parsing --- 
-b8        str8_to_u64(str8_view s, u64* out);
-b8        str8_to_i64(str8_view s, i64* out);
-b8        str8_to_f64(str8_view s, f64* out);
+AETHER_API b8        str8_to_u64(str8_view s, u64* out);
+AETHER_API b8        str8_to_i64(str8_view s, i64* out);
+AETHER_API b8        str8_to_f64(str8_view s, f64* out); /* limits to 64 character */
 
 // --- paths --- 
 // todo(chris): do this
@@ -433,16 +637,16 @@ b8        str8_to_f64(str8_view s, f64* out);
 
 /* ------- F I L E - I / O ------------------------------------------------- */
 
-bytes file_read(Arena* arena, const char* path);
-u64   file_write(const char* path, bytes_view data);
+AETHER_API bytes file_read(Arena* arena, const char* path);
+AETHER_API u64   file_write(const char* path, bytes_view data);
 
 // Read-only view into a memory mapped file
-bytes_view file_map(const char* path);
-void       file_unmap(bytes_view map);
+AETHER_API bytes_view file_map(const char* path);
+AETHER_API void       file_unmap(bytes_view map);
 
 /* ------- T I M E R S ----------------------------------------------------- */
-u64 time_mark(void);
-f64 time_elapsed_sec(u64 start, u64 end);
+AETHER_API u64 time_mark(void);
+AETHER_API f64 time_elapsed_sec(u64 start, u64 end);
 
 typedef struct HighResTimer
 {
@@ -453,19 +657,39 @@ typedef struct HighResTimer
     void* os_timer;
 } HighResTimer;
 
-HighResTimer high_res_timer_create(f64 hz);
-u64          high_res_timer_wait(HighResTimer* t);
-void         high_res_timer_release(HighResTimer* t);
+AETHER_API HighResTimer high_res_timer_create(f64 hz);
+AETHER_API u64          high_res_timer_wait(HighResTimer* t);
+AETHER_API void         high_res_timer_release(HighResTimer* t);
 
-#ifdef __cplusplus
+/* ------- T H R E A D S  -------------------------------------------------- */
+
+typedef int (*thread_fn)(void* user);
+typedef struct Thread { void* handle; } Thread;
+
+typedef u8 ThreadPriority;
+
+enum ThreadPriority_
+{
+    ThreadPriority_Normal = 0,
+    ThreadPriority_High,
+    ThreadPriority_TimeCritical,
+};
+
+AETHER_API Thread thread_create(thread_fn fn, void* user);
+AETHER_API int    thread_join(Thread* t);
+AETHER_API void   thread_set_priority(Thread* t, ThreadPriority p);
+AETHER_API void   thread_sleep_ms(u32 ms);
+
+#if AETHER_LANG_CPP
 }
-#endif // __cplusplus
+#endif // AETHER_LANG_CPP
 
 #endif // AETHER_H_
 
 
 /*---------------------------------------------------------------------------*/
-#ifdef AETHER_IMPLEMENTATION
+#if defined(AETHER_IMPLEMENTATION) && !defined(AETHER_IMPLEMENTATION_DONE)
+#define AETHER_IMPLEMENTATION_DONE
 
 #include <string.h>
 #include <stdarg.h>
@@ -475,7 +699,7 @@ void         high_res_timer_release(HighResTimer* t);
 /*---------------------------------------------------------------------------*/
 /* --- P L A T F O R M ----------------------------------------------------- */
 /*---------------------------------------------------------------------------*/
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
     #endif // WIN32_LEAN_AND_MEAN
@@ -507,50 +731,50 @@ void         high_res_timer_release(HighResTimer* t);
     #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
     #endif // CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 
-#endif // _WIN32
+#endif // AETHER_OS_WINDOWS
 
-#ifdef __cplusplus
+#if AETHER_LANG_CPP
 extern "C"
 {
-#endif // __cplusplus
+#endif // AETHER_LANG_CPP
 
-static u32 os_get_last_error(void)
+// internal u32 os_get_last_error(void)
+// {
+// #if AETHER_OS_WINDOWS
+//     return (u32)GetLastError();
+// #else
+//     #error "AETHER: OS get last error not implemented on this platform"
+// #endif
+// }
+//
+// internal str8 os_error_string(Arena* arena, u32 code)
+// {
+// #if AETHER_OS_WINDOWS
+//     char buf[512];
+//     DWORD len = FormatMessageA(
+//         FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+//         0, (DWORD)code,
+//         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+//         buf, sizeof(buf), 0
+//     );
+//
+//     // strip trailing "\r\n"
+//     while (len > 0 && (buf[len-1] == '\r' || buf[len-1] == '\n'))
+//     {
+//         len -= 1;
+//     }
+//
+//     if (len == 0) return str8_push_fmt(arena, "unknown error (%u)", code );
+//
+//     return str8_push_copy(arena, view_from_raw(buf, len));
+// #else
+//     #error "AETHER: OS error string not implemented on this platform"
+// #endif
+// }
+
+internal u64 os_mem_pagesize(void)
 {
-#ifdef _WIN32
-    return (u32)GetLastError();
-#else
-    #error "AETHER: OS get last error not implemented on this platform"
-#endif
-}
-
-static str8 os_error_string(Arena* arena, u32 code)
-{
-#ifdef _WIN32
-    char buf[512];
-    DWORD len = FormatMessageA(
-        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-        0, (DWORD)code,
-        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        buf, sizeof(buf), 0
-    );
-
-    // string trailing "\r\n"
-    while (len > 0 && (buf[len-1] == '\r' || buf[len-1] == '\n'))
-    {
-        len -= 1;
-    }
-
-    if (len == 0) return str8_push_fmt(arena, "unknown error (%u)", code );
-
-    return str8_push_copy(arena, view_from_raw(buf, len));
-#else
-    #error "AETHER: OS error string not implemented on this platform"
-#endif
-}
-
-static u64 os_mem_pagesize(void)
-{
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     SYSTEM_INFO sysinfo = {0};
     GetSystemInfo(&sysinfo);
     u64 pagesize = (u64)sysinfo.dwPageSize;
@@ -560,9 +784,9 @@ static u64 os_mem_pagesize(void)
 #endif
 }
 
-static u64 os_mem_pagegranularity(void)
+internal u64 os_mem_pagegranularity(void)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     SYSTEM_INFO sysinfo = {0};
     GetSystemInfo(&sysinfo);
     u64 page_granularity = (u64)sysinfo.dwAllocationGranularity;
@@ -572,18 +796,18 @@ static u64 os_mem_pagegranularity(void)
 #endif
 }
 
-static void* os_mem_reserve(u64 size)
+internal void* os_mem_reserve(u64 size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     return VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_READWRITE);
 #else
     #error "AETHER: OS memory allocation not implemented for this platform"
 #endif
 }
 
-static b8 os_mem_commit(void* ptr, u64 size)
+internal b8 os_mem_commit(void* ptr, u64 size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     void* ret = VirtualAlloc(ptr, size, MEM_COMMIT, PAGE_READWRITE);
     return ret != NULL;
 #else
@@ -591,20 +815,20 @@ static b8 os_mem_commit(void* ptr, u64 size)
 #endif
 }
 
-static b8 os_mem_decommit(void* ptr, u64 size)
+internal b8 os_mem_decommit(void* ptr, u64 size)
 {
-#ifdef _WIN32
-    return VirtualFree(ptr, size, MEM_DECOMMIT);
+#if AETHER_OS_WINDOWS
+    return (VirtualFree(ptr, size, MEM_DECOMMIT) != 0);
 #else
     #error "AETHER: OS memory decommit not implemented for this platform"
 #endif
 }
 
-static b8 os_mem_release(void* ptr, u64 size)
+internal b8 os_mem_release(void* ptr, u64 size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     (void)size;
-    return VirtualFree(ptr, 0, MEM_RELEASE);
+    return (VirtualFree(ptr, 0, MEM_RELEASE) != 0);
 #else
     #error "AETHER: OS memory release not implemented for this platform"
 #endif
@@ -614,9 +838,9 @@ static b8 os_mem_release(void* ptr, u64 size)
  *              or os_file_open that allows user
  *              defined read/write mode */
 
-static void* os_file_open_for_read(const char* path)
+internal void* os_file_open_for_read(const char* path)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     HANDLE h = CreateFileA(
         path,
         GENERIC_READ,
@@ -636,9 +860,9 @@ static void* os_file_open_for_read(const char* path)
 #endif
 }
 
-static void* os_file_open_for_write(const char* path)
+internal void* os_file_open_for_write(const char* path)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     HANDLE h = CreateFileA(
         path,
         GENERIC_WRITE,
@@ -655,18 +879,18 @@ static void* os_file_open_for_write(const char* path)
 #endif
 }
 
-static void os_file_close(void* handle)
+internal void os_file_close(void* handle)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     CloseHandle(handle);
 #else
     #error "AETHER: OS file close not implemented for this platform"
 #endif
 }
 
-static b8  os_file_size(void* handle, u64* out_size)
+internal b8  os_file_size(void* handle, u64* out_size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     LARGE_INTEGER filesize;
     if (!GetFileSizeEx(handle, &filesize))
         return false;
@@ -678,9 +902,9 @@ static b8  os_file_size(void* handle, u64* out_size)
 #endif
 }
 
-static b8  os_file_read(void* handle, void* dst, u64 size)
+internal b8  os_file_read(void* handle, void* dst, u64 size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     u8* cursor = (u8*)dst;
     u64 remaining = size;
 
@@ -708,9 +932,9 @@ static b8  os_file_read(void* handle, void* dst, u64 size)
 #endif
 }
 
-static b8 os_file_write(void* handle, const void* src, u64 size)
+internal b8 os_file_write(void* handle, const void* src, u64 size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     const u8* cursor    = (const u8*)src;
     u64       remaining = size;
 
@@ -738,9 +962,9 @@ static b8 os_file_write(void* handle, const void* src, u64 size)
 #endif
 }
 
-static void* os_file_map(void* handle, u64 size)
+internal void* os_file_map(void* handle, u64 size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     (void)size;
     HANDLE hmap = CreateFileMapping(handle, NULL, PAGE_READONLY, 0, 0, NULL);
     if (!hmap) {return NULL; }
@@ -752,9 +976,9 @@ static void* os_file_map(void* handle, u64 size)
 #endif
 }
 
-static void* os_mem_reserve_ring(u64 size)
+internal void* os_mem_reserve_ring(u64 size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     VirtualAlloc2_fn va2 = (VirtualAlloc2_fn)GetProcAddress(GetModuleHandleW(L"kernelbase.dll"), "VirtualAlloc2");
     if (!va2) return NULL;
     return va2(NULL, NULL, 2*size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, NULL, 0);
@@ -763,18 +987,18 @@ static void* os_mem_reserve_ring(u64 size)
 #endif
 }
 
-static b8 os_mem_split_ring(void* ptr, u64 size)
+internal b8 os_mem_split_ring(void* ptr, u64 size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     return VirtualFree(ptr, size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) != 0;
 #else
     #error "AETHER: OS memory ring splitting not implemented for this platform"
 #endif
 }
 
-static void* os_mem_map_ring(void* ptr, u64 size)
+internal void* os_mem_map_ring(void* ptr, u64 size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     MapViewOfFile3_fn mvf3 = (MapViewOfFile3_fn)GetProcAddress(GetModuleHandleW(L"kernelbase.dll"), "MapViewOfFile3");
     if (!mvf3) return NULL;
 
@@ -794,9 +1018,9 @@ static void* os_mem_map_ring(void* ptr, u64 size)
 #endif
 }
 
-static b8 os_mem_release_ring(void* ptr, u64 size)
+internal b8 os_mem_release_ring(void* ptr, u64 size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     UnmapViewOfFile2_fn umvf2 = (UnmapViewOfFile2_fn)GetProcAddress(GetModuleHandleW(L"kernelbase.dll"), "UnmapViewOfFile2");
     if (!umvf2) return false;
 
@@ -811,9 +1035,9 @@ static b8 os_mem_release_ring(void* ptr, u64 size)
 #endif
 }
 
-static void os_file_unmap(const void* ptr, u64 size)
+internal void os_file_unmap(const void* ptr, u64 size)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     (void)size;
     UnmapViewOfFile(ptr);
 #else
@@ -821,9 +1045,9 @@ static void os_file_unmap(const void* ptr, u64 size)
 #endif
 }
 
-static u64 os_time_now(void)
+internal u64 os_time_now(void)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     LARGE_INTEGER counter;
     QueryPerformanceCounter(&counter);
     return (u64)counter.QuadPart;
@@ -832,9 +1056,9 @@ static u64 os_time_now(void)
 #endif
 }
 
-static u64 os_time_frequency(void)
+internal u64 os_time_frequency(void)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
     return (u64)freq.QuadPart;
@@ -843,9 +1067,9 @@ static u64 os_time_frequency(void)
 #endif
 }
 
-static void* os_create_timer(void)
+internal void* os_create_timer(void)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     HANDLE h = CreateWaitableTimerExW(
         NULL,
         NULL,
@@ -859,9 +1083,9 @@ static void* os_create_timer(void)
 #endif
 }
 
-static void os_timer_sleep(void* h, u64 sleep_ticks)
+internal void os_timer_sleep(void* h, u64 sleep_ticks)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
 
     LARGE_INTEGER due;
     due.QuadPart = -(LONGLONG)(sleep_ticks * 10000000ull / os_time_frequency());
@@ -873,18 +1097,18 @@ static void os_timer_sleep(void* h, u64 sleep_ticks)
 #endif
 }
 
-static void os_timer_release(void* h)
+internal void os_timer_release(void* h)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     CloseHandle(h);
 #else
     #error "AETHER: OS release timer not implemented for this platform"
 #endif
 }
 
-static void os_cpu_relax(void)
+internal void os_cpu_relax(void)
 {
-#ifdef _WIN32
+#if AETHER_OS_WINDOWS
     YieldProcessor();
 #else
     #error "AETHER: OS cpu relax not implemented for this platform"
@@ -895,7 +1119,7 @@ static void os_cpu_relax(void)
 /* --- A R E N A S --------------------------------------------------------- */
 /* ------------------------------------------------------------------------- */
 
-static u64 round_up_power_2(u64 n)
+internal u64 round_up_power_2(u64 n)
 {
     if (n == 0) return 1;
     n--;
@@ -908,7 +1132,7 @@ static u64 round_up_power_2(u64 n)
     return n + 1;
 }
 
-static u64 align_forward_u64(u64 value, u64 align)
+internal u64 align_forward_u64(u64 value, u64 align)
 {
     AETHER_ASSERT_(align != 0);
     AETHER_ASSERT_((align & (align - 1)) == 0);
@@ -917,7 +1141,7 @@ static u64 align_forward_u64(u64 value, u64 align)
     return (value + mask) & ~mask;
 }
 
-static void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
+internal void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
 {
     if (new_pos <= arena->commit_size)
         return;
@@ -942,7 +1166,7 @@ static void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
 
 }
 
-static void arena_decommit_tail(Arena* arena, u64 new_pos)
+internal void arena_decommit_tail(Arena* arena, u64 new_pos)
 {
     if ((arena->flags & ArenaFlags_Decommit) == 0)
         return;
@@ -965,7 +1189,7 @@ static void arena_decommit_tail(Arena* arena, u64 new_pos)
     return;
 }
 
-Arena* arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags)
+AETHER_API Arena* arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page_granularity, ArenaFlags flags)
 {
     AETHER_ASSERT_(reserve_size > 0);
 
@@ -995,7 +1219,7 @@ Arena* arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 commit_page
 
 }
 
-Arena* arena_alloc(u64 reserve_size)
+AETHER_API Arena* arena_alloc(u64 reserve_size)
 {
 #if AETHER_ENABLE_ASSERTS
     // Debug defaults
@@ -1013,24 +1237,20 @@ Arena* arena_alloc(u64 reserve_size)
     return arena_alloc_ex(reserve_size, initial_commit, granularity, flags);
 }
 
-void arena_release(Arena* arena)
+AETHER_API void arena_release(Arena* arena)
 {
     if (!arena) return;
     os_mem_release(arena, arena->reserved_size);
 }
 
-void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
+AETHER_API void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
 {
     AETHER_ASSERT_(arena->pos <= arena->reserved_size);
 
     u64 aligned_pos = align_forward_u64(arena->pos, align);
-    AETHER_ASSERT_(aligned_pos <= arena->reserved_size);
-
-    // catch u64 overflow
-    if (size > arena->reserved_size - aligned_pos)
+    if (aligned_pos < arena->pos || aligned_pos > arena->reserved_size || size > arena->reserved_size - aligned_pos)
     {
-        AETHER_ASSERT_(!"arena_push overflow: allocation exceeds reserved size");
-        return NULL;
+        AETHER_ASSERT_(!"arena_push overflow"); return NULL;
     }
 
     u64 new_pos = aligned_pos + size;
@@ -1049,7 +1269,7 @@ void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
     return result;
 }
 
-void arena_pop_to(Arena* arena, u64 pos)
+AETHER_API void arena_pop_to(Arena* arena, u64 pos)
 {
     if (pos < AETHER_ARENA_HEADER_SIZE) pos = AETHER_ARENA_HEADER_SIZE;
     if (pos > arena->pos)               pos = arena->pos;
@@ -1064,7 +1284,7 @@ void arena_pop_to(Arena* arena, u64 pos)
 }
 
 
-void arena_pop(Arena* arena, u64 amt)
+AETHER_API void arena_pop(Arena* arena, u64 amt)
 {
     if (amt > arena->pos)
         amt = arena->pos;
@@ -1072,12 +1292,12 @@ void arena_pop(Arena* arena, u64 amt)
     arena_pop_to(arena, arena->pos - amt);
 }
 
-void arena_clear(Arena* arena)
+AETHER_API void arena_clear(Arena* arena)
 {
     arena_pop_to(arena, AETHER_ARENA_HEADER_SIZE);
 }
 
-ArenaTemp arena_begin_temp(Arena* arena)
+AETHER_API ArenaTemp arena_begin_temp(Arena* arena)
 {
     ArenaTemp tmp;
     tmp.arena = arena;
@@ -1085,7 +1305,7 @@ ArenaTemp arena_begin_temp(Arena* arena)
     return tmp;
 }
 
-void arena_end_temp(ArenaTemp temp)
+AETHER_API void arena_end_temp(ArenaTemp temp)
 {
     AETHER_ASSERT_(temp.pos <= temp.arena->pos);
     arena_pop_to(temp.arena, temp.pos);
@@ -1095,7 +1315,7 @@ void arena_end_temp(ArenaTemp temp)
 /* --- R I N G / B U F F E R S --------------------------------------------- */
 /* ------------------------------------------------------------------------- */
 
-RingBuffer ring_buffer_alloc(u64 size)
+AETHER_API RingBuffer ring_buffer_alloc(u64 size)
 {
     AETHER_ASSERT_(size > 0);
 
@@ -1106,7 +1326,7 @@ RingBuffer ring_buffer_alloc(u64 size)
     u64 ring_size        = AETHER_MAX_(size_pow2, page_granularity);
 
     rb.base = (u8*)os_mem_reserve_ring(ring_size);
-    if (!rb.base) FATAL("Failed to allocated RingBuffer\n");
+    if (!rb.base) FATAL("Failed to allocate RingBuffer\n");
 
     if (!os_mem_split_ring(rb.base, ring_size))
     {
@@ -1129,7 +1349,7 @@ RingBuffer ring_buffer_alloc(u64 size)
     return rb;
 }
 
-void ring_buffer_release(RingBuffer* rb)
+AETHER_API void ring_buffer_release(RingBuffer* rb)
 {
     if (!rb || !rb->base) return;
     os_mem_release_ring(rb->base, rb->size);
@@ -1139,7 +1359,7 @@ void ring_buffer_release(RingBuffer* rb)
     rb->write = 0;
 }
 
-u64 ring_buffer_available(RingBuffer* rb)
+AETHER_API u64 ring_buffer_available(RingBuffer* rb)
 {
     if (!rb || !rb->base) return 0;
     u64 read  = atomic_load_acq_u64(&rb->read);
@@ -1147,8 +1367,10 @@ u64 ring_buffer_available(RingBuffer* rb)
     return write - read;
 }
 
-b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len)
+AETHER_API b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len)
 {
+    if (!rb || !rb->base) return false;
+    if (len == 0) return true;
 
     bytes_view view = ring_buffer_peek(rb, len);
     if (!view.size) return false;
@@ -1159,7 +1381,7 @@ b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len)
     return true;
 }
 
-b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len)
+AETHER_API b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len)
 {
     if (!rb || !rb->base) return false;
     if (len > rb->size ) return false;
@@ -1176,7 +1398,7 @@ b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len)
     return true;
 }
 
-b8  ring_buffer_advance_read(RingBuffer* rb, u64 len)
+AETHER_API b8  ring_buffer_advance_read(RingBuffer* rb, u64 len)
 {
     if (!rb || !rb->base) return false;
 
@@ -1190,7 +1412,7 @@ b8  ring_buffer_advance_read(RingBuffer* rb, u64 len)
     return true;
 }
 
-bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
+AETHER_API bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
 {
     bytes_view v = {0};
     if (!rb || !rb->base) return v;
@@ -1209,22 +1431,28 @@ bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
 /* ------------------------------------------------------------------------- */
 /* --- S T R I N G S ------------------------------------------------------- */
 /* ------------------------------------------------------------------------- */
+internal void* arena_push_or_fatal_(Arena* arena, u64 size, u64 align)
+{
+    void* p = arena_push(arena, size, align, ArenaZero_Never);
+    if (!p) FATAL("arena exhausted");
+    return p;
+}
 
-char* c_str(Arena* arena, str8_view s)
+AETHER_API char* c_str(Arena* arena, str8_view s)
 {
     AETHER_ASSERT_(arena != NULL);
     AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
 
-    char* dst = (char*)arena_push(arena, s.size + 1, 1, ArenaZero_Never);
+    char* dst = (char*)arena_push_or_fatal_(arena, s.size + 1, 1);
     if (s.size) memcpy(dst, s.data, s.size);
     dst[s.size] = '\0';
     return dst;
 }
 
-char* c_str_push_copy(Arena* arena, const char* src)
+AETHER_API char* c_str_push_copy(Arena* arena, const char* src)
 {
     size_t len = strlen(src);
-    char *dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Never);
+    char *dst = (char*)arena_push_or_fatal_(arena, (u64)len + 1, 1);
     memcpy(dst, src, len + 1);
     return dst;
 }
@@ -1240,14 +1468,15 @@ static inline char* c_str_push_fmtv(Arena* arena, const char* fmt, va_list args)
     AETHER_ASSERT_(len >= 0);
 
     /* use 1-byte alignment to maximum packing */
-    char* dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Never);
+    char* dst = (char*)arena_push_or_fatal_(arena, (u64)len + 1, 1);
     int written = vsnprintf(dst, (size_t)len + 1, fmt, args);
     AETHER_ASSERT_(written == len);
+    (void)written;
 
     return dst;
 }
 
-char* c_str_push_fmt(Arena* arena, const char* fmt, ...)
+AETHER_API char* c_str_push_fmt(Arena* arena, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -1256,20 +1485,23 @@ char* c_str_push_fmt(Arena* arena, const char* fmt, ...)
     return dst;
 }
 
-str8 str8_push_copy(Arena* arena, str8_view src)
+AETHER_API str8 str8_push_copy(Arena* arena, str8_view src)
 {
+    AETHER_ASSERT_(arena != NULL);
+    AETHER_ASSERT_(src.data != NULL || src.size == 0); /* NULL data with size > 0 is a caller bug */
+
     str8 result;
     result.size = src.size;
-    result.data = (u8*)arena_push(arena, src.size + 1, 1, ArenaZero_Never);
-    memcpy(result.data, src.data, src.size);
+    result.data = (u8*)arena_push_or_fatal_(arena, src.size + 1, 1);
+    if (src.size) memcpy(result.data, src.data, src.size);
     result.data[result.size] = '\0';
     return result;
 }
 
-str8 str8_push_c_str(Arena* arena, const char* src)
+AETHER_API str8 str8_push_c_str(Arena* arena, const char* src)
 {
     size_t len = strlen(src);
-    char*  dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Never);
+    char*  dst = (char*)arena_push_or_fatal_(arena, (u64)len + 1, 1);
     memcpy(dst, src, len + 1);
 
     str8 result;
@@ -1289,10 +1521,11 @@ static inline str8 str8_push_fmtv(Arena* arena, const char* fmt, va_list args)
 
     AETHER_ASSERT_(len >= 0);
 
-    char* dst = (char*)arena_push(arena, (u64)len + 1, 1, ArenaZero_Never);
+    char* dst = (char*)arena_push_or_fatal_(arena, (u64)len + 1, 1);
 
     int written = vsnprintf(dst, (size_t)len + 1, fmt, args);
     AETHER_ASSERT_(written == len);
+    (void)written;
 
     str8 result;
     result.data = (u8*)dst;
@@ -1300,7 +1533,7 @@ static inline str8 str8_push_fmtv(Arena* arena, const char* fmt, va_list args)
     return result;
 }
 
-str8 str8_push_fmt(Arena* arena, const char* fmt, ...)
+AETHER_API str8 str8_push_fmt(Arena* arena, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -1309,20 +1542,24 @@ str8 str8_push_fmt(Arena* arena, const char* fmt, ...)
     return result;
 }
 
-str8 str8_concat(Arena* arena, str8_view a, str8_view b)
+AETHER_API str8 str8_concat(Arena* arena, str8_view a, str8_view b)
 {
+    AETHER_ASSERT_(arena != NULL);
+    AETHER_ASSERT_(a.data != NULL || a.size == 0); /* NULL data with size > 0 is a caller bug */
+    AETHER_ASSERT_(b.data != NULL || b.size == 0); /* NULL data with size > 0 is a caller bug */
+
     str8 result;
 
     result.size = a.size + b.size;
-    result.data = (u8*)arena_push(arena, result.size+1, 1, ArenaZero_Never);
-    memcpy(result.data, a.data, a.size);
-    memcpy(result.data+a.size, b.data, b.size);
+    result.data = (u8*)arena_push_or_fatal_(arena, result.size+1, 1);
+    if (a.size) memcpy(result.data, a.data, a.size);
+    if (b.size) memcpy(result.data+a.size, b.data, b.size);
     result.data[result.size] = '\0';
 
     return result;
 }
 
-str8_view view_from_c_str(const char* s)
+AETHER_API str8_view view_from_c_str(const char* s)
 {
     str8_view v = {0};
 
@@ -1337,7 +1574,7 @@ str8_view view_from_c_str(const char* s)
     return v;
 }
 
-str8_view str8_slice(str8_view s, u64 start, u64 end)
+AETHER_API str8_view str8_slice(str8_view s, u64 start, u64 end)
 {
     AETHER_ASSERT_(start <= end && end <= s.size);
     str8_view v;
@@ -1346,23 +1583,23 @@ str8_view str8_slice(str8_view s, u64 start, u64 end)
     return v;
 }
 
-str8_view str8_skip(str8_view s, u64 n)
+AETHER_API str8_view str8_skip(str8_view s, u64 n)
 {
     AETHER_ASSERT_(n <= s.size);
     return str8_slice(s, n, s.size);
 }
 
-str8_view str8_drop(str8_view s, u64 n)
+AETHER_API str8_view str8_drop(str8_view s, u64 n)
 {
     AETHER_ASSERT_(n <= s.size);
     return str8_slice(s, 0, s.size - n);
 }
 
-static b8 char_is_ws(u8 c)    { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
-static b8 char_is_upper(u8 c) { return ('A' <= c && c <= 'Z'); }
-static b8 char_is_lower(u8 c) { return ('a' <= c && c <= 'z'); }
+internal b8 char_is_ws(u8 c)    { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+internal b8 char_is_upper(u8 c) { return ('A' <= c && c <= 'Z'); }
+internal b8 char_is_lower(u8 c) { return ('a' <= c && c <= 'z'); }
 
-str8_view str8_trim(str8_view s)
+AETHER_API str8_view str8_trim(str8_view s)
 {
     u64 start = 0;
     while (start < s.size && char_is_ws(s.data[start])) start++;
@@ -1373,7 +1610,7 @@ str8_view str8_trim(str8_view s)
     return str8_slice(s, start, end);
 }
 
-str8_view str8_trim_left(str8_view s)
+AETHER_API str8_view str8_trim_left(str8_view s)
 {
     u64 start = 0;
     while (start < s.size && char_is_ws(s.data[start])) start++;
@@ -1381,7 +1618,7 @@ str8_view str8_trim_left(str8_view s)
     return str8_slice(s, start, s.size);
 }
 
-str8_view str8_trim_right(str8_view s)
+AETHER_API str8_view str8_trim_right(str8_view s)
 {
     u64 end = s.size;
     while ( end > 0 && char_is_ws(s.data[end-1])) end--;
@@ -1390,14 +1627,18 @@ str8_view str8_trim_right(str8_view s)
 }
 
 
-b8 str8_eq(str8_view a, str8_view b)
+AETHER_API b8 str8_eq(str8_view a, str8_view b)
 {
+    AETHER_ASSERT_(a.data != NULL || a.size == 0); /* NULL data with size > 0 is a caller bug */
+    AETHER_ASSERT_(b.data != NULL || b.size == 0); /* NULL data with size > 0 is a caller bug */
+
     if (a.size != b.size) return false;
+    if (a.size == 0)      return true;
     if (a.data == b.data) return true;
     return memcmp(a.data, b.data, a.size) == 0;
 }
 
-b8 str8_eq_nocase(str8_view a, str8_view b)
+AETHER_API b8 str8_eq_nocase(str8_view a, str8_view b)
 {
     if (a.size != b.size) return false;
 
@@ -1412,7 +1653,7 @@ b8 str8_eq_nocase(str8_view a, str8_view b)
 
 }
 
-b8 str8_has_prefix(str8_view s, str8_view prefix)
+AETHER_API b8 str8_has_prefix(str8_view s, str8_view prefix)
 {
     if (!prefix.data || !prefix.size || !s.data || !s.size) return false;
 
@@ -1424,7 +1665,7 @@ b8 str8_has_prefix(str8_view s, str8_view prefix)
     return true;
 }
 
-b8 str8_has_suffix(str8_view s, str8_view suffix)
+AETHER_API b8 str8_has_suffix(str8_view s, str8_view suffix)
 {
     if (!suffix.data || !suffix.size || !s.data || !s.size) return false;
 
@@ -1441,7 +1682,7 @@ b8 str8_has_suffix(str8_view s, str8_view suffix)
 }
 
 // todo(chris): update brute-force method to use Boyer-Moore-Horspool
-b8 str8_find(str8_view s, str8_view needle, u64* pos)
+AETHER_API b8 str8_find(str8_view s, str8_view needle, u64* pos)
 {
     if (needle.size == 0) { *pos = 0; return true; }
     if (needle.size > s.size) return false;
@@ -1456,7 +1697,7 @@ b8 str8_find(str8_view s, str8_view needle, u64* pos)
     return false;
 }
 
-b8 str8_find_last(str8_view s, str8_view needle, u64* pos)
+AETHER_API b8 str8_find_last(str8_view s, str8_view needle, u64* pos)
 {
     if (needle.size == 0) {*pos = s.size; return true;}
     b8 found = false;
@@ -1473,7 +1714,7 @@ b8 str8_find_last(str8_view s, str8_view needle, u64* pos)
     return found;
 }
 
-b8 str8_find_char(str8_view s, u8 c, u64* pos)
+AETHER_API b8 str8_find_char(str8_view s, u8 c, u64* pos)
 {
     for (u64 i = 0; i < s.size; ++i)
     {
@@ -1482,16 +1723,19 @@ b8 str8_find_char(str8_view s, u8 c, u64* pos)
     return false;
 }
 
-i32 str8_cmp(str8_view a, str8_view b)
+AETHER_API i32 str8_cmp(str8_view a, str8_view b)
 {
+    AETHER_ASSERT_(a.data != NULL || a.size == 0); /* NULL data with size > 0 is a caller bug */
+    AETHER_ASSERT_(b.data != NULL || b.size == 0); /* NULL data with size > 0 is a caller bug */
+
     u64 n = AETHER_MIN_(a.size, b.size);
-    i32 r = memcmp(a.data, b.data, n);
+    i32 r = n ? memcmp(a.data, b.data, (size_t)n) : 0;
     if (r != 0) return r;
     if (a.size != b.size) return (a.size < b.size) ? -1 : 1;
     return 0;
 }
 
-b8 str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after)
+AETHER_API b8 str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after)
 {
     AETHER_ASSERT_(s.data   != NULL || s.size   == 0);
     AETHER_ASSERT_(sep.data != NULL || sep.size == 0);
@@ -1520,7 +1764,7 @@ b8 str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after)
     return false;
 }
 
-Str8List str8_split(Arena* arena, str8_view s, str8_view sep, Str8SplitFlags flags)
+AETHER_API Str8List str8_split(Arena* arena, str8_view s, str8_view sep, Str8SplitFlags flags)
 {
     Str8List list = {0};
 
@@ -1535,9 +1779,10 @@ Str8List str8_split(Arena* arena, str8_view s, str8_view sep, Str8SplitFlags fla
     return list;
 }
 
-void str8_list_push(Arena* arena, Str8List* list, str8_view v)
+AETHER_API void str8_list_push(Arena* arena, Str8List* list, str8_view v)
 {
     Str8Node* node = arena_push_t_nozero(arena, Str8Node);
+    if (!node) FATAL("arena exhausted");
     node->v = v;
     node->next = 0;
 
@@ -1549,13 +1794,13 @@ void str8_list_push(Arena* arena, Str8List* list, str8_view v)
     list->total_len += v.size;
 }
 
-static void str8_list_push_fmtv(Arena* arena, Str8List* list, const char* fmt, va_list args)
+internal void str8_list_push_fmtv(Arena* arena, Str8List* list, const char* fmt, va_list args)
 {
     str8_view v = view_from_str8(str8_push_fmtv(arena, fmt, args));
     str8_list_push(arena, list, v);
 }
 
-void str8_list_push_fmt(Arena* arena, Str8List* list, const char* fmt, ...)
+AETHER_API void str8_list_push_fmt(Arena* arena, Str8List* list, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -1563,7 +1808,7 @@ void str8_list_push_fmt(Arena* arena, Str8List* list, const char* fmt, ...)
     va_end(args);
 }
 
-str8 str8_join(Arena* arena, Str8List* list, str8_view sep)
+AETHER_API str8 str8_join(Arena* arena, Str8List* list, str8_view sep)
 {
     str8 dst = {0};
 
@@ -1571,7 +1816,7 @@ str8 str8_join(Arena* arena, Str8List* list, str8_view sep)
     if (!node) return dst;
 
     u64 len = list->total_len + (list->count - 1) * sep.size;
-    u8* buf = (u8*)arena_push(arena, len + 1, 1, ArenaZero_Never);
+    u8* buf = (u8*)arena_push_or_fatal_(arena, len + 1, 1);
 
     u64 offset = 0;
     while (node)
@@ -1593,12 +1838,13 @@ str8 str8_join(Arena* arena, Str8List* list, str8_view sep)
     return dst;
 }
 
-Str8Array str8_list_to_array(Arena* arena, Str8List* list)
+AETHER_API Str8Array str8_list_to_array(Arena* arena, Str8List* list)
 {
     Str8Array result = {0};
     if (!list) return result;
 
     result.items = (str8_view*)arena_push_array_nozero(arena, str8_view, list->count);
+    if (!result.items) FATAL("arena exhausted");
     result.count = list->count;
 
     Str8Node* node = list->first;
@@ -1611,11 +1857,11 @@ Str8Array str8_list_to_array(Arena* arena, Str8List* list)
     return result;
 }
 
-str8 str8_to_upper(Arena* arena, str8_view s)
+AETHER_API str8 str8_to_upper(Arena* arena, str8_view s)
 {
     str8 result;
     result.size = s.size;
-    result.data = (u8*)arena_push(arena, s.size + 1, 1, ArenaZero_Never);
+    result.data = (u8*)arena_push_or_fatal_(arena, s.size + 1, 1);
 
     for (u64 i = 0; i < s.size; ++i)
         result.data[i] = char_is_lower(s.data[i]) ? s.data[i] - 32 : s.data[i];
@@ -1624,11 +1870,11 @@ str8 str8_to_upper(Arena* arena, str8_view s)
     return result;
 }
 
-str8 str8_to_lower(Arena* arena, str8_view s)
+AETHER_API str8 str8_to_lower(Arena* arena, str8_view s)
 {
     str8 result;
     result.size = s.size;
-    result.data = (u8*)arena_push(arena, s.size + 1, 1, ArenaZero_Never);
+    result.data = (u8*)arena_push_or_fatal_(arena, s.size + 1, 1);
 
     for (u64 i = 0; i < s.size; ++i)
         result.data[i] = char_is_upper(s.data[i]) ? s.data[i] + 32: s.data[i];
@@ -1637,7 +1883,7 @@ str8 str8_to_lower(Arena* arena, str8_view s)
     return result;
 }
 
-str8 str8_replace(Arena* arena, str8_view s, str8_view old, str8_view target)
+AETHER_API str8 str8_replace(Arena* arena, str8_view s, str8_view old, str8_view target)
 {
 
     u64 count = 0;
@@ -1651,7 +1897,7 @@ str8 str8_replace(Arena* arena, str8_view s, str8_view old, str8_view target)
     }
 
     u64 new_len = s.size + count * (i64)(target.size - old.size);
-    u8* buf     = (u8*)arena_push(arena, new_len + 1, 1, ArenaZero_Never);
+    u8* buf     = (u8*)arena_push_or_fatal_(arena, new_len + 1, 1);
 
     u64 w = 0;
     rest = s;
@@ -1670,7 +1916,7 @@ str8 str8_replace(Arena* arena, str8_view s, str8_view old, str8_view target)
 }
 
 
-b8 str8_to_u64(str8_view s, u64* out)
+AETHER_API b8 str8_to_u64(str8_view s, u64* out)
 {
     if (s.size == 0) return false;
 
@@ -1696,7 +1942,7 @@ b8 str8_to_u64(str8_view s, u64* out)
     return true;
 }
 
-b8 str8_to_i64(str8_view s, i64* out)
+AETHER_API b8 str8_to_i64(str8_view s, i64* out)
 {
     if (s.size == 0) return false;
 
@@ -1726,7 +1972,7 @@ b8 str8_to_i64(str8_view s, i64* out)
     return true;
 }
 
-b8 str8_to_f64(str8_view s, f64* out)
+AETHER_API b8 str8_to_f64(str8_view s, f64* out)
 {
     // todo(chris): handroll this for the excercise
     char buf[64];
@@ -1751,7 +1997,7 @@ b8 str8_to_f64(str8_view s, f64* out)
 /* ------------------------------------------------------------------------- */
 
 
-bytes  file_read(Arena* arena, const char* path)
+AETHER_API bytes  file_read(Arena* arena, const char* path)
 {
     bytes result = {0};
     void* h = os_file_open_for_read(path);
@@ -1762,23 +2008,28 @@ bytes  file_read(Arena* arena, const char* path)
 
     u64 mark = arena->pos;
 
-    result.data = arena_push_array_nozero(arena, u8, size);
-    result.size = size;
+    u8* data = arena_push_array_nozero(arena, u8, size);
+    if (!data)
+    {
+        os_file_close(h);
+        arena_pop_to(arena, mark);
+        return result;
+    }
 
-    b8 ok = os_file_read(h, result.data, size);
+    b8 ok = os_file_read(h, data, size);
     os_file_close(h);
 
     if (!ok) {
         arena_pop_to(arena, mark);
-        result.data = NULL;
-        result.size = 0;
         return result;
     }
 
+    result.data = data;
+    result.size = size;
     return result;
 }
 
-u64 file_write(const char* path, bytes_view data)
+AETHER_API u64 file_write(const char* path, bytes_view data)
 {
     void* h = os_file_open_for_write(path);
     if (!h) return 0;
@@ -1789,7 +2040,7 @@ u64 file_write(const char* path, bytes_view data)
     return ok ? data.size : 0;
 }
 
-bytes_view  file_map(const char* path)
+AETHER_API bytes_view  file_map(const char* path)
 {
     bytes_view v = {0};
     void* h = os_file_open_for_read(path);
@@ -1809,7 +2060,7 @@ bytes_view  file_map(const char* path)
     return v;
 }
 
-void  file_unmap(bytes_view buf)
+AETHER_API void  file_unmap(bytes_view buf)
 {
     os_file_unmap(buf.data, buf.size);
 }
@@ -1818,18 +2069,18 @@ void  file_unmap(bytes_view buf)
 /* --- T I M I N G --------------------------------------------------------- */
 /* ------------------------------------------------------------------------- */
 
-u64 time_mark(void)
+AETHER_API u64 time_mark(void)
 {
     return os_time_now();
 }
 
-f64 time_elapsed_sec(u64 start, u64 end)
+AETHER_API f64 time_elapsed_sec(u64 start, u64 end)
 {
     return (f64)(end - start) / (f64)os_time_frequency();
 }
 
 
-HighResTimer high_res_timer_create(f64 hz)
+AETHER_API HighResTimer high_res_timer_create(f64 hz)
 {
     AETHER_ASSERT_(hz > 0);
 
@@ -1854,7 +2105,7 @@ HighResTimer high_res_timer_create(f64 hz)
     return t;
 }
 
-u64 high_res_timer_wait(HighResTimer* t)
+AETHER_API u64 high_res_timer_wait(HighResTimer* t)
 {
 
     if (!t->os_timer) return 0;
@@ -1870,7 +2121,7 @@ u64 high_res_timer_wait(HighResTimer* t)
         return misses;
     }
 
-    if (t-> next_deadline > now + t->spin_margin)
+    if (t->next_deadline > now + t->spin_margin)
         os_timer_sleep(t->os_timer, t->next_deadline - now - t->spin_margin);
 
     while (os_time_now() < t->next_deadline)
@@ -1879,7 +2130,7 @@ u64 high_res_timer_wait(HighResTimer* t)
     return 0;
 }
 
-void high_res_timer_release(HighResTimer* t)
+AETHER_API void high_res_timer_release(HighResTimer* t)
 {
     if (!t || !t->os_timer) return;
     os_timer_release(t->os_timer);
@@ -1890,9 +2141,9 @@ void high_res_timer_release(HighResTimer* t)
     return;
 }
 
-#ifdef __cplusplus
+#if AETHER_LANG_CPP
 }
-#endif // __cplusplus
+#endif // AETHER_LANG_CPP
 
 #endif // AETHER_IMPLEMENTATION
 /*---------------------------------------------------------------------------*/
