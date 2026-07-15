@@ -181,7 +181,7 @@
 #endif // AETHER_BUILD_DEBUG
 
 #if defined(AETHER_STATIC) && defined(AETHER_DLL)
-    #error "AETHER_STATIC and AETHER_DLL are mutually exclusive"
+#error "AETHER_STATIC and AETHER_DLL are mutually exclusive"
 #endif
 
 #if defined(AETHER_STATIC) && defined(AETHER_BUILD_DLL)
@@ -674,8 +674,9 @@ enum ThreadPriority_
 };
 
 AETHER_API Thread thread_create(thread_fn fn, void* user);
-AETHER_API int    thread_join(Thread* t);
-AETHER_API void   thread_set_priority(Thread* t, ThreadPriority p);
+AETHER_API b8     thread_join(Thread* t, int* out_code);
+AETHER_API b8     thread_set_priority(Thread* t, ThreadPriority p);
+AETHER_API void   thread_yield(void);
 AETHER_API void   thread_sleep_ms(u32 ms);
 
 #if AETHER_LANG_CPP
@@ -707,6 +708,7 @@ AETHER_API void   thread_sleep_ms(u32 ms);
     #endif // NOMINMAX
 
     #include <windows.h>
+    #include <process.h> /* required for _beginthreadex */
 
     /* required for ring buffers to avoid compile-time link requirement */
     typedef PVOID (WINAPI *VirtualAlloc2_fn)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, void*, ULONG);
@@ -1110,6 +1112,87 @@ internal void os_cpu_relax(void)
     YieldProcessor();
 #else
     #error "AETHER: OS cpu relax not implemented for this platform"
+#endif
+}
+
+internal void os_thread_yield(void)
+{
+#if AETHER_OS_WINDOWS
+    SwitchToThread();
+#else
+    #error "AETHER: OS thread yield not implemented for this platform"
+#endif
+
+}
+typedef struct ThreadStart_ { thread_fn fn; void* user; u64 taken; } ThreadStart_;
+
+#if AETHER_OS_WINDOWS
+internal unsigned __stdcall os_thread_thunk_(void* arg)
+{
+    ThreadStart_* start = (ThreadStart_*)arg;
+    thread_fn fn = start->fn;
+    void* user   = start->user;
+    atomic_store_rel_u64(&start->taken, 1);
+    return (unsigned)fn(user);
+}
+#endif // AETHER_OS_WINDOWS
+
+internal void* os_thread_create(thread_fn fn, void* user)
+{
+    ThreadStart_ start = {0};
+    start.fn   = fn;
+    start.user = user;
+    void* h = NULL;
+#if AETHER_OS_WINDOWS
+    h = (void*)_beginthreadex(NULL, 0, os_thread_thunk_, &start, 0, NULL);
+#else
+    #error "AETHER: OS thread create not implemented on this platform"
+#endif
+    if (!h) return NULL;
+    while (!atomic_load_acq_u64(&start.taken)) os_thread_yield();
+    return h;
+}
+
+internal int os_thread_join(void* h)
+{
+#if AETHER_OS_WINDOWS
+    WaitForSingleObject((HANDLE)h, INFINITE);
+    DWORD code = 0;
+    GetExitCodeThread((HANDLE)h, &code);
+    CloseHandle((HANDLE)h);
+    return (int)code;
+#else
+    #error "AETHER: OS thread join not implemented on this platform"
+#endif
+}
+
+internal b8 os_thread_set_priority(void* h, ThreadPriority p)
+{
+#if AETHER_OS_WINDOWS
+    int win = THREAD_PRIORITY_NORMAL;
+    if (p == ThreadPriority_High)         win = THREAD_PRIORITY_HIGHEST;
+    if (p == ThreadPriority_TimeCritical) win = THREAD_PRIORITY_TIME_CRITICAL;
+    return SetThreadPriority((HANDLE)h, win) != 0;
+#else
+    #error "AETHER: OS set thread priority not implemented on this platform"
+#endif
+}
+
+internal void os_thread_sleep_ms(u32 ms)
+{
+#if AETHER_OS_WINDOWS
+    if (ms == 0) { os_thread_yield(); return; }
+    HANDLE h = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!h) { Sleep(ms); return; } /* pre-1803: flag is rejected */
+    LARGE_INTEGER due;
+    due.QuadPart = -(LONGLONG)ms * 10000; /* relative, 100 ns units */
+    if (SetWaitableTimer(h, &due, 0, NULL, NULL, FALSE))
+        WaitForSingleObject(h, INFINITE);
+    else
+        Sleep(ms);
+    CloseHandle(h);
+#else
+    #error "AETHER: OS thread sleep ms not implemented on this platform"
 #endif
 }
 
@@ -2138,6 +2221,43 @@ AETHER_API void high_res_timer_release(HighResTimer* t)
     t->overrun       = 0;
     return;
 }
+/*---------------------------------------------------------------------------*/
+/* --- T H R E A D S ------------------------------------------------------- */
+/*---------------------------------------------------------------------------*/
+
+AETHER_API Thread thread_create(thread_fn fn, void* user)
+{
+    Thread t = {0};
+    if (!fn) return t;
+    t.handle = os_thread_create(fn, user);
+    return t;
+}
+
+AETHER_API b8 thread_join(Thread* t, int* out_code)
+{
+    if (!t || !t->handle) return false;
+    int code = os_thread_join(t->handle);
+    t->handle = NULL;
+    if (out_code) *out_code = code;
+    return true;
+}
+
+AETHER_API b8 thread_set_priority(Thread* t, ThreadPriority p)
+{
+    if (!t || !t->handle) return false;
+    return os_thread_set_priority(t->handle, p);
+}
+
+AETHER_API void thread_yield(void)
+{
+   os_thread_yield();
+}
+
+AETHER_API void thread_sleep_ms(u32 ms)
+{
+    os_thread_sleep_ms(ms);
+}
+
 
 #if AETHER_LANG_CPP
 }

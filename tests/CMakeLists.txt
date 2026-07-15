@@ -69,6 +69,21 @@ foreach(case ${RING_TEST_CASES})
     add_test(NAME ring_${case} COMMAND test_ring ${case})
 endforeach()
 
+add_executable(test_ring_spsc
+    test_ring_spsc.c
+)
+
+target_link_libraries(test_ring_spsc
+    PRIVATE
+        aether::aether
+)
+
+set(RING_SPSC_TEST_CASES thread_api thread_sleep consumer_hot producer_hot)
+
+foreach(case ${RING_SPSC_TEST_CASES})
+    add_test(NAME ring_spsc_${case} COMMAND test_ring_spsc ${case})
+endforeach()
+
 # --- standard-conformance probes (compile is the test; pedantic where supported) ---
 enable_language(CXX)   # only needed when building tests; keeps the top-level project C-only
 
