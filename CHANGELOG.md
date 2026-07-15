@@ -3,7 +3,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.13] - 2026-07-14
 
 ### Added
 - Context detection section: `AETHER_COMPILER_MSVC/GCC/CLANG`, `AETHER_OS_WINDOWS/MAC/LINUX/ANDROID/BSD` (+ derived `AETHER_OS_POSIX`), `AETHER_ARCH_X64/ARM64/X86`, `AETHER_LANG_C/CPP` (+ `AETHER_LANG_C23`), and `AETHER_BUILD_DEBUG`. All are always defined to `0` or `1` so use sites are `#if` (never `#ifdef`); an undetected compiler/OS/arch fails with a labeled `#error`, as do targets outside the current support envelope (Windows, 64-bit x64/arm64).

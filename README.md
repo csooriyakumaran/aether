@@ -15,6 +15,7 @@ It provides a minimal set of common primitives:
 - file I/O (read a file into an arena, write a byte span to a path)
 - memory-mapped files
 - atomics (64-bit acquire-load / release-store)
+- threads (create/join, priority control, yield, high-resolution sleep)
 - ring / circular buffers (virtually-mirrored — reads and writes that wrap the end stay a single contiguous copy; safe across one producer and one consumer thread)
 - timing helpers
 
@@ -395,6 +396,58 @@ void atomic_store_rel_u64(u64* p, u64 v);  /* store with release ordering */
 A release store makes every memory operation before it visible before the store itself; an acquire load that observes the stored value is guaranteed to also observe everything the storing thread did first. This pairing is the building block for publish/consume patterns between two threads — it is what `RingBuffer` uses internally for its single-producer/single-consumer guarantee, and it is the right tool for simple cross-thread signals (a stop flag, a mode word) where a lock would be overkill.
 
 The implementation sits on compiler intrinsics (`__iso_volatile` loads/stores plus a per-arch barrier on MSVC x64/ARM64; `__atomic` builtins on GCC/Clang), so there is no `<stdatomic.h>` / `<atomic>` dependency and the same functions compile as both C and C++. A 64-bit target is required and enforced with a compile-time assert.
+
+## Threads
+
+AETHER provides a minimal OS-thread API — create, join, priority, yield, sleep — enough to put a producer and a consumer on their own threads without pulling in `<threads.h>` / `<thread>` or pthreads.
+
+```c
+typedef int (*thread_fn)(void* user);
+typedef struct Thread { void* handle; } Thread;
+```
+
+### API
+
+| FUNCTION                    | DESCRIPTION                                                                                   |
+| --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `thread_create(fn, user)`   | Start a thread running `fn(user)`. Returns a `Thread` by value; `handle == NULL` on failure (or if `fn` is `NULL`). |
+| `thread_join(&t, &code)`    | Wait for the thread to finish, optionally receive its return value, then close and `NULL` the handle. Returns `b8` — `false` for a `NULL`/already-joined thread, so joining twice is safe, not UB. |
+| `thread_set_priority(&t, p)` | Map `ThreadPriority_Normal` / `_High` / `_TimeCritical` onto the OS scheduler priority. Returns `b8` success. |
+| `thread_yield()`            | Offer the rest of the timeslice to another ready thread (used in spin-wait loops).             |
+| `thread_sleep_ms(ms)`       | Sleep for `ms` milliseconds; `thread_sleep_ms(0)` yields instead.                              |
+
+The start arguments are handed off with an acquire/release handshake: `thread_create` does not return until the new thread has copied `fn` and `user` out of the caller's frame, so they may safely live on the caller's stack — no heap allocation is needed (or performed) to launch a thread.
+
+> [!NOTE]
+> `thread_sleep_ms` uses a high-resolution waitable timer (Windows 10 1803+), giving ~millisecond accuracy without touching the global timer resolution (`timeBeginPeriod`). On older systems it degrades to plain `Sleep`, whose granularity is the scheduler tick (~15.6 ms).
+
+A typical worker with a stop flag ties the atomics and thread APIs together:
+
+```c
+typedef struct Worker { u64 stop; } Worker;
+
+static int worker_main(void* user)
+{
+    Worker* w = (Worker*)user;
+    while (!atomic_load_acq_u64(&w->stop))
+    {
+        /* ... do work ... */
+        thread_yield();
+    }
+    return 0;
+}
+
+Worker w = {0};
+Thread t = thread_create(worker_main, &w);   /* &w on the stack is fine */
+if (!t.handle) { /* creation failed */ }
+
+/* ... main thread does its own work ... */
+
+atomic_store_rel_u64(&w.stop, 1);   /* signal: everything written before
+                                       the store is visible to the worker */
+int code = 0;
+thread_join(&t, &code);             /* wait, reap exit code, close handle */
+```
 
 ## Ring Buffers
 
