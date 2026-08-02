@@ -84,6 +84,22 @@ foreach(case ${RING_SPSC_TEST_CASES})
     add_test(NAME ring_spsc_${case} COMMAND test_ring_spsc ${case})
 endforeach()
 
+add_executable(test_networking
+    test_networking.c
+)
+
+target_link_libraries(test_networking
+    PRIVATE
+        iris::iris
+        aether::aether
+)
+
+set(NETWORKING_TEST_CASES context tcp_roundtrip)
+
+foreach(case ${NETWORKING_TEST_CASES})
+    add_test(NAME iris_${case} COMMAND test_networking ${case})
+endforeach()
+
 # --- standard-conformance probes (compile is the test; pedantic where supported) ---
 enable_language(CXX)   # only needed when building tests; keeps the top-level project C-only
 
