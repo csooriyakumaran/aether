@@ -656,6 +656,7 @@ typedef struct HighResTimer
 } HighResTimer;
 
 AETHER_API HighResTimer high_res_timer_create(f64 hz);
+AETHER_API void         high_res_timer_set_rate(HighResTimer* t, f64 hz);
 AETHER_API u64          high_res_timer_wait(HighResTimer* t);
 AETHER_API void         high_res_timer_release(HighResTimer* t);
 
@@ -2167,23 +2168,29 @@ AETHER_API HighResTimer high_res_timer_create(f64 hz)
 
     HighResTimer t = {0};
 
-    u64 freq         = os_time_frequency();
-    u64 period_ticks = (u64)((f64)freq / hz + 0.5);
-    u64 now          = os_time_now();
-    void* os_timer   = os_create_timer();
-
+    void* os_timer = os_create_timer();
     if (!os_timer)
     {
         FATAL("Failed to create platform timer");
         return t;
     }
 
-    t.period_ticks  = period_ticks;
     t.os_timer      = os_timer;
-    t.next_deadline = now;
-    t.spin_margin   = freq / 1000;
+    t.spin_margin   = os_time_frequency() / 1000;
+
+    high_res_timer_set_rate(&t, hz);
 
     return t;
+}
+
+AETHER_API void high_res_timer_set_rate(HighResTimer* t, f64 hz)
+{
+    AETHER_ASSERT_(hz > 0);
+    if (!t || !t->os_timer) return;
+
+    u64 freq = os_time_frequency();
+    t->period_ticks  = (u64)((f64)freq / hz + 0.5);
+    t->next_deadline = os_time_now();
 }
 
 AETHER_API u64 high_res_timer_wait(HighResTimer* t)
@@ -2221,6 +2228,7 @@ AETHER_API void high_res_timer_release(HighResTimer* t)
     t->overrun       = 0;
     return;
 }
+
 /*---------------------------------------------------------------------------*/
 /* --- T H R E A D S ------------------------------------------------------- */
 /*---------------------------------------------------------------------------*/
