@@ -532,3 +532,78 @@ Two things make this safe and convenient:
 
 > [!NOTE]
 > The buffer is thread-safe for **exactly one producer thread and one consumer thread** — the `read`/`write` cursors are published with acquire/release atomics, so this pairing needs no external locking. More than one producer or more than one consumer requires external synchronization.
+
+# IRIS
+
+***lightweight sockets on top of aether***
+
+IRIS is a small single-header networking library. It provides blocking IPv4 socket primitives — TCP listen/accept/connect/send/recv, UDP to follow — built around one pattern: a dedicated network thread that a coordinator cancels by closing its socket, rather than a non-blocking/poll loop.
+
+## Requirements
+
+Single-header, **no link-time dependencies** — `ws2_32.dll` is resolved and loaded at runtime (`LoadLibraryExW` + `GetProcAddress`, pinned by `net_init`), mirroring aether's own `VirtualAlloc2` pattern; nothing in the build links `ws2_32` directly. Requires aether. Currently **Windows-only** — non-Windows branches are labeled `#error` stubs pending the POSIX port.
+
+## Integration
+
+```c
+#define AETHER_IMPLEMENTATION
+#define IRIS_IMPLEMENTATION
+#include "iris/iris.h"
+```
+
+`IRIS_STATIC` / `IRIS_BUILD_DLL` / `IRIS_DLL` mirror aether's linkage defines exactly.
+
+## Networking
+
+Call `net_init()` once from `main`, before any other iris call and before any thread that touches sockets starts; mirror it with `net_shutdown()` at exit. Not reference-counted, not thread-safe — this is iris's one process-wide side effect.
+
+```c
+typedef struct NetAddr { u8 ip[4]; u16 port; } NetAddr;  /* ip wire-order, port host-order */
+typedef struct Socket  { u64 handle; } Socket;            /* {0} = invalid */
+
+typedef u8 NetResult;
+enum NetResult_ { NetResult_OK = 0, NetResult_Closed, NetResult_Error };
+```
+
+### API
+
+| FUNCTION | DESCRIPTION |
+| --- | --- |
+| `net_addr(a,b,c,d,port)` / `net_addr_any(port)` / `net_addr_loopback(port)` | Build a `NetAddr` from literal octets, `0.0.0.0`, or `127.0.0.1`. |
+| `net_addr_parse(dotted_quad, port, &out)` | Numeric-only parse (no DNS); rejects garbage/out-of-range octets. |
+| `socket_valid(s)` / `socket_close(&s)` | Check / release a socket. `socket_close` is safe to call from another thread while `s` is blocked inside `tcp_accept`/`tcp_recv`/`tcp_send` — this is how a coordinator cancels a network thread. |
+| `tcp_listen(addr, backlog)` | Bind + listen. `{0}` on failure. |
+| `tcp_accept(listener, &out_peer)` | Blocks until a connection arrives. `{0}` only on cancellation or a hard failure — never "nobody pending yet". |
+| `tcp_connect(addr)` | Blocking handshake. `{0}` on failure. |
+| `tcp_send(s, data, &out_sent)` / `tcp_recv(s, buf, cap, &out_recv)` | Blocking; partial sends report `out_sent < data.size` rather than retrying internally — callers doing zero-copy sends drive their own retry. |
+
+> [!NOTE]
+> There is no non-blocking mode and no readiness-polling API. Each socket is owned by exactly one thread doing blocking I/O on it; a coordinator cancels it by calling `socket_close` from the outside. See `docs/iris-networking-design.md` for the reasoning.
+
+```c
+int network_thread_fn(void* user)
+{
+    Socket* listener = (Socket*)user;
+    NetAddr peer;
+    Socket client = tcp_accept(*listener, &peer);   /* blocks */
+    if (!socket_valid(client)) return 0;              /* cancelled or hard failure */
+
+    u8 buf[512]; u64 got = 0;
+    if (tcp_recv(client, buf, sizeof(buf), &got) == NetResult_OK) { /* ... */ }
+
+    socket_close(&client);
+    return 0;
+}
+
+net_init();
+Socket listener = tcp_listen(net_addr_any(23), 1);
+Thread t = thread_create(network_thread_fn, &listener);
+
+/* ... shutdown ... */
+socket_close(&listener);   /* unblocks tcp_accept from another thread */
+thread_join(&t, NULL);
+net_shutdown();
+```
+
+UDP (`udp_open`/`udp_send_to`/`udp_recv_from`) is declared but not yet implemented.
+

@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased] 
 
 ### Added
+- **iris**: new networking library (`include\iris\iris.h`), Windows-only for now (POSIX branches are labeledas `#error` stubs). Process-wide lifetime via `net_init`/`net_shutdown`, which pin and dynamically load `ws2_32.dll` at runtime (`LoadLibraryExW` + `GetProcAddress`) - no `-lws2_32` link dependency, mirroring aether's `VirtualAlloc2` runtime-loading pattern. Address construction: `NetAddr` (IPv4, wire-order `ip[4]` + host-order `port`), `net_addr` / `net_addr_any` / `net_addr_loopback`, `net_addr_parse` (numeric dotted-quad only, no DNS). `Socket` is a `{ u64 handle }` with a `+1` bias so `{0}` is invalid, matching aether's zero-init-is-empty convention.
+- iris TCP: `tcp_listen`/`tcp_accept`/`tcp_connect`/`tcp_send`/`tcp_recv`. Every call blocks - there is no non-blocking mode and no readiness-polling API; a socket is cancelled from another thread by calling `socket_close` on it, which Windows guarantees unblocks any pending call. `TCP_NODELAY` is always set. Partial sends are reported through an `out_sent` count rather than looped-until-complete internally, so zero-copy send paths (`ring_buffer_peek` -> `tcp_send` -> `ring_buffer_advance_read(sent)`) get honest accounting. `NetResult` is a three-state result (`OK`/`Closed`/`Error`) plus an out-count. 
 - `high_res_timer_set_rate` allows the tick rate of a `HighResTimer` to be changed after the timer is created. 
 
 ## [0.0.13] - 2026-07-14
