@@ -2,6 +2,10 @@
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+## [Unreleased] 
+
+### Added
+- `high_res_timer_set_rate` allows the tick rate of a `HighResTimer` to be changed after the timer is created. 
 
 ## [0.0.13] - 2026-07-14
 
