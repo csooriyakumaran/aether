@@ -15,6 +15,10 @@ project(aether
     LANGUAGES C
 )
 
+if(PROJECT_IS_TOP_LEVEL)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+endif()
+
 option(AETHER_BUILD_EXAMPLES "Build AETHER examples" OFF)
 option(AETHER_BUILD_TESTS "Build AETHER test" OFF)
 option(AETHER_BUILD_INSTALL "Enable install rules" OFF)
@@ -22,6 +26,9 @@ option(AETHER_BUILD_INSTALL "Enable install rules" OFF)
 
 add_library(aether INTERFACE)
 add_library(aether::aether ALIAS aether)
+
+add_library(iris INTERFACE)
+add_library(iris::iris ALIAS iris)
 
 target_compile_features(aether INTERFACE c_std_11)
 
@@ -32,6 +39,13 @@ configure_file(
 )
 
 target_include_directories(aether
+    INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
+target_include_directories(iris
     INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
