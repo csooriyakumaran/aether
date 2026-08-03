@@ -305,6 +305,8 @@ IRIS_API NetResult udp_recv_from(Socket s, void* buf, u64 cap, u64* out_recv, Ne
     typedef int     (WSAAPI *connect_fn)(SOCKET, const struct sockaddr*, int);
     typedef int     (WSAAPI *send_fn)(SOCKET, const char*, int, int);
     typedef int     (WSAAPI *recv_fn)(SOCKET, char*, int, int);
+    typedef int     (WSAAPI *sendto_fn)(SOCKET, const char*, int, int, const struct sockaddr*, int);
+    typedef int     (WSAAPI *recvfrom_fn)(SOCKET, char*, int, int, struct sockaddr*, int*);
 
     internal HMODULE os_ws2_dll_;
     internal FARPROC os_ws2_sym_(const char* name)
@@ -516,9 +518,74 @@ internal NetResult os_tcp_recv(u64 h, u8* buf, u64 cap, u64* out_recv)
 #endif
 }
 
-internal u64 os_udp_open(NetAddr bind_addr);
-internal NetResult os_udp_send_to(u64 h, NetAddr to, const u8* data, u64 len);
-internal NetResult os_udp_recv_from(u64 h, u8* buf, u64 cap, u64* out_recv, NetAddr* out_from);
+internal u64 os_udp_open(NetAddr bind_addr)
+{
+#if IRIS_OS_WINDOWS
+    socket_fn psocket = (socket_fn)os_ws2_sym_("socket");
+    bind_fn   pbind   = (bind_fn)  os_ws2_sym_("bind");
+    if (!psocket || !pbind) return 0;
+
+    SOCKET s = psocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == INVALID_SOCKET) return 0;
+
+    SOCKADDR_IN sa = os_addr_to_sockaddr_(bind_addr);
+    if (pbind(s, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR)
+    {
+        os_socket_close(os_socket_from_raw_(s));
+        return 0;
+    }
+
+    return os_socket_from_raw_(s);
+#else // IRIS_OS_POSIX
+    #error "IRIS: OS udp open not implemented on this platform"
+#endif
+}
+
+internal NetResult os_udp_send_to(u64 h, NetAddr to, const u8* data, u64 len)
+{
+#if IRIS_OS_WINDOWS
+    if (!h) return NetResult_Error;
+    if (len > (u64)INT_MAX) return NetResult_Error; /* oversized datagram */
+
+    sendto_fn psendto = (sendto_fn)os_ws2_sym_("sendto");
+    if (!psendto) return NetResult_Error;
+
+    SOCKET      s  = (SOCKET)(h - 1);
+    SOCKADDR_IN sa = os_addr_to_sockaddr_(to);
+
+    int sent = psendto(s, (const char*)data, (int)len, 0, (SOCKADDR*)&sa, sizeof(sa));
+    if (sent == SOCKET_ERROR || (u64)sent != len) return NetResult_Error;
+
+    return NetResult_OK;
+#else // IRIS_OS_POSIX
+    #error "IRIS: OS udp send to not implemented on this platform"
+#endif
+}
+
+internal NetResult os_udp_recv_from(u64 h, u8* buf, u64 cap, u64* out_recv, NetAddr* out_from)
+{
+#if IRIS_OS_WINDOWS
+    if (out_recv) *out_recv = 0;
+    if (!h) return NetResult_Error;
+
+    recvfrom_fn precvfrom = (recvfrom_fn)os_ws2_sym_("recvfrom");
+    if (!precvfrom) return NetResult_Error;
+
+    SOCKET      s       = (SOCKET)(h - 1);
+    int         chunk   = (cap > (u64)INT_MAX) ? INT_MAX : (int)cap;
+    SOCKADDR_IN sa      = {0};
+    int         addrlen = sizeof(sa);
+
+    int got = precvfrom(s, (char*)buf, chunk, 0, (SOCKADDR*)&sa, &addrlen);
+    if (got == SOCKET_ERROR) return NetResult_Error;
+
+    if (out_from) *out_from = os_sockaddr_to_addr_(sa);
+    if (out_recv) *out_recv = (u64)got;
+    return NetResult_OK;
+#else // IRIS_OS_POSIX
+    #error "IRIS: OS udp recv from not implemented on this platform"
+#endif
+}
 
 
 /* ------------------------------------------------------------------------- */
@@ -627,9 +694,22 @@ IRIS_API NetResult tcp_recv(Socket s, void* buf, u64 cap, u64* out_recv)
 /* --- U D P --------------------------------------------------------------- */
 /* ------------------------------------------------------------------------- */
 
-IRIS_API Socket udp_open(NetAddr bind_addr);
-IRIS_API NetResult udp_send_to(Socket s, NetAddr to, bytes_view datagram);
-IRIS_API NetResult udp_recv_from(Socket s, void* buf, u64 cap, u64* out_recv, NetAddr* out_from);
+IRIS_API Socket udp_open(NetAddr bind_addr)
+{
+    Socket s = {0};
+    s.handle = os_udp_open(bind_addr);
+    return s;
+}
+
+IRIS_API NetResult udp_send_to(Socket s, NetAddr to, bytes_view datagram)
+{
+    return os_udp_send_to(s.handle, to, datagram.data, datagram.size);
+}
+
+IRIS_API NetResult udp_recv_from(Socket s, void* buf, u64 cap, u64* out_recv, NetAddr* out_from)
+{
+    return os_udp_recv_from(s.handle, (u8*)buf, cap, out_recv, out_from);
+}
 
 #if IRIS_LANG_CPP
 }
