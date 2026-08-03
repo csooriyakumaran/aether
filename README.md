@@ -576,6 +576,8 @@ enum NetResult_ { NetResult_OK = 0, NetResult_Closed, NetResult_Error };
 | `tcp_accept(listener, &out_peer)` | Blocks until a connection arrives. `{0}` only on cancellation or a hard failure — never "nobody pending yet". |
 | `tcp_connect(addr)` | Blocking handshake. `{0}` on failure. |
 | `tcp_send(s, data, &out_sent)` / `tcp_recv(s, buf, cap, &out_recv)` | Blocking; partial sends report `out_sent < data.size` rather than retrying internally — callers doing zero-copy sends drive their own retry. |
+| `udp_open(bind_addr)` | Bind a UDP socket. `{0}` on failure. |
+| `udp_send_to(s, to, datagram)` / `udp_recv_from(s, buf, cap, &out_recv, &out_from)` | Blocking; datagrams send whole or not at all — an oversized datagram is `NetResult_Error`, never a partial count. `udp_recv_from` fills the sender's address. |
 
 > [!NOTE]
 > There is no non-blocking mode and no readiness-polling API. Each socket is owned by exactly one thread doing blocking I/O on it; a coordinator cancels it by calling `socket_close` from the outside. See `docs/iris-networking-design.md` for the reasoning.
@@ -605,5 +607,19 @@ thread_join(&t, NULL);
 net_shutdown();
 ```
 
-UDP (`udp_open`/`udp_send_to`/`udp_recv_from`) is declared but not yet implemented.
+A UDP round trip is the same shape, without the listen/accept step:
+
+```c
+NetAddr addr_a = net_addr_loopback(9000);
+NetAddr addr_b = net_addr_loopback(9001);
+
+Socket sock_a = udp_open(addr_a);
+Socket sock_b = udp_open(addr_b);
+
+const char* msg = "hello";
+udp_send_to(sock_a, addr_b, view_from_raw(msg, strlen(msg)));
+
+u8 buf[64]; u64 got = 0; NetAddr from = {0};
+udp_recv_from(sock_b, buf, sizeof(buf), &got, &from);   /* from == addr_a */
+```
 
