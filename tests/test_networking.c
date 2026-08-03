@@ -102,10 +102,49 @@ static void test_tcp_roundtrip(void)
     net_shutdown();
 }
 
+/* --- udp round trip ---------------------------------------------------- */
+
+static void test_udp_roundtrip(void)
+{
+    SECTION("iris: udp -- open/send_to/recv_from round trip");
+
+    ASSERT(net_init());
+
+    NetAddr addr_a = net_addr_loopback(54346);
+    NetAddr addr_b = net_addr_loopback(54347);
+
+    Socket sock_a = udp_open(addr_a);
+    ASSERT(socket_valid(sock_a));
+
+    Socket sock_b = udp_open(addr_b);
+    ASSERT(socket_valid(sock_b));
+
+    const char* msg = "hello udp";
+    u64 msg_len = (u64)strlen(msg);
+
+    NetResult r = udp_send_to(sock_a, addr_b, view_from_raw(msg, msg_len));
+    ASSERT(r == NetResult_OK);
+
+    char buf[64] = {0};
+    u64 got = 0;
+    NetAddr from = {0};
+    r = udp_recv_from(sock_b, buf, sizeof(buf), &got, &from);
+    ASSERT(r == NetResult_OK);
+    ASSERT(got == msg_len);
+    ASSERT(memcmp(buf, msg, got) == 0);
+    ASSERT(from.ip[0] == 127 && from.ip[1] == 0 && from.ip[2] == 0 && from.ip[3] == 1);
+    ASSERT(from.port == addr_a.port);
+
+    socket_close(&sock_a);
+    socket_close(&sock_b);
+    net_shutdown();
+}
+
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"context",        test_context},
     {"tcp_roundtrip",  test_tcp_roundtrip},
+    {"udp_roundtrip",  test_udp_roundtrip},
 };
 
 int main(int argc, char** argv)

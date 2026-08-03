@@ -94,7 +94,7 @@ target_link_libraries(test_networking
         aether::aether
 )
 
-set(NETWORKING_TEST_CASES context tcp_roundtrip)
+set(NETWORKING_TEST_CASES context tcp_roundtrip udp_roundtrip)
 
 foreach(case ${NETWORKING_TEST_CASES})
     add_test(NAME iris_${case} COMMAND test_networking ${case})
