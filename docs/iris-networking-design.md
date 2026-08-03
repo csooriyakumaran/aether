@@ -175,20 +175,19 @@ the `os_` layer; platform ifdefs confined to the `os_` layer with
 noun-verb naming; the `WIN32_LEAN_AND_MEAN` / `<winsock2.h>` header-order
 hazard). None of them depend on blocking-vs-non-blocking.
 
-14. **`ws2_32` is linked directly for now (`-lws2_32` /
-    `target_link_libraries(... ws2_32)`), reversing the superseded doc's
-    decision 13.** Runtime-loading it (mirroring the `VirtualAlloc2`
-    pattern aether already uses for kernelbase) is real, well-understood
-    work — a pinned `HMODULE`, ~15 function-pointer typedefs, a resolve
-    helper — but nothing in the codebase yet needs the link-free guarantee
-    it buys: there is one consumer, it already accepts a Windows build with
-    normal link flags, and the "deferred until it has a caller" rule this
-    doc applies everywhere else (`NetPoll_Write`, detailed error codes,
-    IPv6) applies here too. Direct linking is not a dead end: nothing in
-    the public API or the `os_` function signatures changes when this
-    migrates, only what's inside each `os_` helper's body. See "Migration:
-    self-hosting ws2_32" below for the trigger condition, the mechanism,
-    and the full symbol list.
+14. **`ws2_32` is self-hosted: resolved and loaded at runtime, never
+    linked.** `net_init` pins `ws2_32.dll` with `LoadLibraryExW(...,
+    LOAD_LIBRARY_SEARCH_SYSTEM32)`; every `os_` helper resolves the exact
+    Winsock function it needs via `GetProcAddress` at the point of use,
+    mirroring the `VirtualAlloc2` pattern aether already uses for
+    kernelbase (decision 13 of the superseded doc). Nothing in this repo's
+    build links `ws2_32` — no `-lws2_32`, no `target_link_libraries`. This
+    landed directly rather than going through the interim direct-link step
+    an earlier draft of this decision described: the mechanism turned out
+    to be small enough (a pinned `HMODULE`, ~15 function-pointer typedefs,
+    one resolve helper) that deferring it bought nothing. See
+    "Implementation: self-hosting ws2_32" below for the mechanism and the
+    full symbol list.
 
 ## Public API (iris.h, NET section after the context block)
 
@@ -273,21 +272,19 @@ already the OS default, so that step in each helper simply drops out:
 | `os_udp_*` | `sendto` / `recvfrom` | same, `MSG_NOSIGNAL` on send |
 | `os_socket_close` | `closesocket` (cancels other threads' pending calls) | `close` — needs a cancellation-safe path, see decision 11 |
 
-## Migration: self-hosting ws2_32 (deferred)
+## Implementation: self-hosting ws2_32
 
-**Trigger to revisit:** a consumer that needs a link-free Windows build —
-a bare GCC/MinGW toolchain without `-lws2_32` wired in, or a second
-project that inherits `iris.h` without controlling its own link step.
-Until one exists, decision 14 keeps the simple `-lws2_32` link.
+Landed in `iris.h` as described in decision 14 — this section records the
+mechanism and the full symbol list, not a future plan.
 
-**Mechanism, when it happens:** mirror aether's `VirtualAlloc2` pattern
-(`aether.h`, ring-buffer memory helpers) with the one addition ws2_32
-needs and kernelbase doesn't — `kernelbase.dll` is a Known DLL already
-resident in every process, so aether only ever *looks up* it
-(`GetModuleHandleW`); `ws2_32.dll` is not resident by default, so iris
-must *load* it. `net_init`/`net_shutdown` (decision 1) are the natural
-owner of that load/unload pair, since they already own the process-wide
-socket-layer lifetime:
+**Mechanism:** mirror aether's `VirtualAlloc2` pattern (`aether.h`,
+ring-buffer memory helpers) with the one addition ws2_32 needs and
+kernelbase doesn't — `kernelbase.dll` is a Known DLL already resident in
+every process, so aether only ever *looks up* it (`GetModuleHandleW`);
+`ws2_32.dll` is not resident by default, so iris must *load* it.
+`net_init`/`net_shutdown` (decision 1) are the natural owner of that
+load/unload pair, since they already own the process-wide socket-layer
+lifetime:
 
 ```c
 internal HMODULE os_ws2_dll_;   /* pinned by os_net_init; NULL = net layer down */
@@ -473,13 +470,14 @@ All loopback, no external network, in `tests/test_networking.c`.
 
 ## Follow-ups after landing
 
-- CMake: `target_link_libraries(iris INTERFACE ws2_32)` under `if(WIN32)`
-  — current state per decision 14; revisit per "Migration: self-hosting
-  ws2_32" once a consumer actually needs a link-free build.
-- iris.h preamble: document `-lws2_32` and the `<windows.h>`-before-
-  implementation ordering hazard (decision 15, unchanged).
-- README: an IRIS section mirroring the Atomics/Ring/Threads pattern, with
-  the network-thread-as-a-real-thread example from this doc.
+- ~~CMake: `target_link_libraries(iris INTERFACE ws2_32)` under
+  `if(WIN32)`~~ — not needed; `ws2_32` is self-hosted (decision 14), so
+  there is no link step to add.
+- iris.h preamble: document the `<windows.h>`-before-implementation
+  ordering hazard (decision 15, unchanged) — no `-lws2_32` note needed for
+  the same reason.
+- ~~README: an IRIS section mirroring the Atomics/Ring/Threads pattern~~ —
+  done.
 - mps-emulator-c: its network thread becomes `thread_create` + this
   design's usage sketch; its own quit-flag polling loop goes away in favor
   of `socket_close`-triggered cancellation at shutdown.
