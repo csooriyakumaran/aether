@@ -308,7 +308,7 @@ IRIS_API NetResult udp_recv_from(Socket s, void* buf, u64 cap, u64* out_recv, Ne
     typedef int     (WSAAPI *sendto_fn)(SOCKET, const char*, int, int, const struct sockaddr*, int);
     typedef int     (WSAAPI *recvfrom_fn)(SOCKET, char*, int, int, struct sockaddr*, int*);
 
-    internal HMODULE os_ws2_dll_;
+    global   HMODULE os_ws2_dll_ = NULL;
     internal FARPROC os_ws2_sym_(const char* name)
     {
         return os_ws2_dll_ ? GetProcAddress(os_ws2_dll_, name) : NULL;
