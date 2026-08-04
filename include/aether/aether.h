@@ -429,6 +429,23 @@ static inline void atomic_store_rel_u64(u64* p, u64 v)
 #endif 
 }
 
+/*
+ * CAS: Compare and Swap
+ *  read current value, and if it still equals the expected value
+ *  then replace it with something new. 
+ *  returns true if swap occurred, false if *p no longer matches 
+ *  expected (in which case *p is untouched).
+ */
+static inline b8 atomic_cas_u64(u64* p, u64 expected, u64 desired)
+{
+#if AETHER_ATOMICS_GNU
+    return __atomic_compare_exchange_n(p, &expected, desired, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+#else
+    __int64 prev = _InterlockedCompareExchange64((volatile __int64*)p, (__int64)desired, (__int64)expected);
+    return prev == (__int64)expected;
+#endif 
+}
+
 /*----------------------------------------------------------------------------*/
 
 #define BIT8(x)  ((u8)  (1u   << (x)))
