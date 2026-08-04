@@ -697,6 +697,23 @@ AETHER_API b8     thread_set_priority(Thread* t, ThreadPriority p);
 AETHER_API void   thread_yield(void);
 AETHER_API void   thread_sleep_ms(u32 ms);
 
+/* ------- C O N S O L E - S I G N A L - H A N D L I N G ------------------- */
+
+typedef void (*console_signal_fn)(void* user);
+
+/* Installs a process-wide console control handler covering Ctrl+C, Ctrl+Break
+ * console-close, logoff, and shutdown -- aether does not distinguish between
+ * them (see design doc, decision 1). fn runs on an OS-created thread that is 
+ * neither the calling thread nor any aether Thread; keep it tiny (flag-set
+ * only) -- see design doc, Pitfalls. Only one handler may be installed at a 
+ * time. Returns false if one already is, or if the OS call fails */
+AETHER_API b8   console_signal_install(console_signal_fn fn, void* user);
+
+/* Removes the installed handler. Safe to call when none is installed */
+AETHER_API void console_signal_uninstall(void);
+
+/*---------------------------------------------------------------------------*/
+
 #if AETHER_LANG_CPP
 }
 #endif // AETHER_LANG_CPP
@@ -1211,6 +1228,39 @@ internal void os_thread_sleep_ms(u32 ms)
     CloseHandle(h);
 #else
     #error "AETHER: OS thread sleep ms not implemented on this platform"
+#endif
+}
+
+global console_signal_fn console_signal_fn_        = NULL;
+global void*             console_signal_user_      = NULL;
+global u64               console_signal_ready_     = 0; /* atomic gate */
+global b8                console_signal_installed_ = false;
+
+#if AETHER_OS_WINDOWS
+internal BOOL WINAPI os_console_ctrl_thunk_(DWORD ctrl_type)
+{
+    (void)ctrl_type; /* intentionally unused */
+    if (atomic_load_acq_u64(&console_signal_ready_) && console_signal_fn_)
+        console_signal_fn_(console_signal_user_);
+    return TRUE;
+}
+#endif // AETHER_OS_WINDOWS
+
+internal b8 os_console_signal_install(void)
+{
+#if AETHER_OS_WINDOWS
+    return SetConsoleCtrlHandler(os_console_ctrl_thunk_, TRUE) != 0;
+#else
+    #error "AETHER: OS console signal install not implemented for this platform"
+#endif
+}
+
+internal void os_console_signal_uninstall(void)
+{
+#if AETHER_OS_WINDOWS
+    SetConsoleCtrlHandler(os_console_ctrl_thunk_, FALSE);
+#else
+    #error "AETHER: OS console signal uninstall not implemented for this platform"
 #endif
 }
 
@@ -2283,6 +2333,40 @@ AETHER_API void thread_sleep_ms(u32 ms)
     os_thread_sleep_ms(ms);
 }
 
+/*---------------------------------------------------------------------------*/
+/* --- C O N S O L E - S I G N A L S ----------------------------------------*/
+/*---------------------------------------------------------------------------*/
+
+AETHER_API b8 console_signal_install(console_signal_fn fn, void* user)
+{
+    if (!fn) return false;
+    if (console_signal_installed_) return false; /* single active handler only */
+
+    console_signal_fn_   = fn;
+    console_signal_user_ = user;
+    atomic_store_rel_u64(&console_signal_ready_, 1);
+
+    if (!os_console_signal_install())
+    {
+        atomic_store_rel_u64(&console_signal_ready_, 0);
+        console_signal_fn_   = NULL;
+        console_signal_user_ = NULL;
+        return false;
+    }
+
+    console_signal_installed_ = true;
+    return true;
+}
+
+AETHER_API void console_signal_uninstall(void)
+{
+    if (!console_signal_installed_) return;
+    os_console_signal_uninstall();
+    atomic_store_rel_u64(&console_signal_ready_, 0);
+    console_signal_installed_ = false;
+    console_signal_fn_        = NULL;
+    console_signal_user_      = NULL;
+}
 
 #if AETHER_LANG_CPP
 }

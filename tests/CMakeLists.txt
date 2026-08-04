@@ -100,6 +100,26 @@ foreach(case ${NETWORKING_TEST_CASES})
     add_test(NAME iris_${case} COMMAND test_networking ${case})
 endforeach()
 
+add_executable(test_console_signal
+    test_console_signal.c
+)
+
+target_link_libraries(test_console_signal
+    PRIVATE
+        aether::aether
+)
+
+# fires_on_ctrl_c is deliberately not registered as a ctest case: it fires a
+# real GenerateConsoleCtrlEvent, which needs a normal interactive console
+# session to be delivered at all (confirmed absent even in a minimal Win32-only
+# repro under this environment's automated process launches -- not an aether
+# bug). Run it manually: test_console_signal.exe fires_on_ctrl_c
+set(CONSOLE_SIGNAL_TEST_CASES install_contract)
+
+foreach(case ${CONSOLE_SIGNAL_TEST_CASES})
+    add_test(NAME console_signal_${case} COMMAND test_console_signal ${case})
+endforeach()
+
 # --- standard-conformance probes (compile is the test; pedantic where supported) ---
 enable_language(CXX)   # only needed when building tests; keeps the top-level project C-only
 

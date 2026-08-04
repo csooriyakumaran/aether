@@ -449,6 +449,41 @@ int code = 0;
 thread_join(&t, &code);             /* wait, reap exit code, close handle */
 ```
 
+## Console Signal
+
+AETHER wraps `SetConsoleCtrlHandler` so Win32 never has to leak into application code for the one thing most programs need it for: a clean way to catch Ctrl+C and shut down gracefully.
+
+```c
+typedef void (*console_signal_fn)(void* user);
+
+b8   console_signal_install(console_signal_fn fn, void* user);
+void console_signal_uninstall(void);
+```
+
+Ctrl+C, Ctrl+Break, console-close, logoff, and shutdown all invoke the same `fn(user)` — AETHER does not distinguish between them, since every known use treats all five identically ("something external wants this process to stop"). Only one handler may be installed at a time; a second `console_signal_install` while one is active returns `false`.
+
+> [!NOTE]
+> `fn` runs on an OS-created thread that is neither the calling thread nor any AETHER `Thread`, and it can fire concurrently with anything else in the process. Keep it to the bare minimum — a flag set via `atomic_store_rel_u64`, nothing that allocates or blocks — the same discipline as a POSIX signal handler, even though Win32 doesn't mechanically enforce it. `CTRL_CLOSE_EVENT`/`CTRL_LOGOFF_EVENT`/`CTRL_SHUTDOWN_EVENT` carry a real termination grace period (historically a few seconds) regardless of what `fn` does — whatever shutdown sequence it triggers needs to finish quickly.
+
+Pairs naturally with the atomics/threads example above — the handler sets the same kind of stop flag a worker thread already polls:
+
+```c
+static void on_signal(void* user)
+{
+    atomic_store_rel_u64(&((Worker*)user)->stop, 1);   /* tiny: flag-set only */
+}
+
+Worker w = {0};
+Thread t = thread_create(worker_main, &w);
+console_signal_install(on_signal, &w);
+
+/* ... */
+
+int code = 0;
+thread_join(&t, &code);
+console_signal_uninstall();
+```
+
 ## Ring Buffers
 
 AETHER provides a fixed-capacity **ring (circular) buffer** for byte streams — a single-producer / single-consumer FIFO that is safe across two threads without locks, useful for pipes, logging, and telemetry.
