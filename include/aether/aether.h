@@ -247,6 +247,14 @@ extern "C"
     #define AETHER_DEBUG_BREAK() __builtin_trap()
 #endif // AETHER_COMPILER_MSVC
 
+#if AETHER_COMPILER_MSVC
+    #define AETHER_ALIGN(n) __declspec(align(n))
+#else
+    #define AETHER_ALIGN(n) __attribute__((aligned(n)))
+#endif // AETHER_COMPILER_MSVC
+
+#define AETHER_CACHE_LINE_SIZE 64
+
 #if AETHER_LANG_CPP
     #define ARENA_ALIGN(T) alignof(T)
 #else
@@ -531,23 +539,30 @@ AETHER_API void      arena_end_temp(ArenaTemp temp);
 
 /* - Ring buffers are safe for exactly one producer thread and one consumer thread
  *   more of either requires external synchronization
- * - peeked views become invalid after the matching advance_read */
+ * - peeked views become invalid after the matching advance_read
+ * - only one reserve() may be oustanding at a time; commit() or
+ *   cancel_reservation() before next reserve() */
 
-typedef struct RingBuffer
+typedef struct AETHER_ALIGN(AETHER_CACHE_LINE_SIZE) RingBuffer
 {
+    u64 read;
+    AETHER_ALIGN(AETHER_CACHE_LINE_SIZE)
+    u64 write;
+    u64 reserved;
     u8* base;
     u64 size;
-    u64 read;
-    u64 write;
 } RingBuffer;
 
 AETHER_API RingBuffer ring_buffer_alloc(u64 size);
 AETHER_API void       ring_buffer_release(RingBuffer* rb);
 AETHER_API u64        ring_buffer_available(RingBuffer* rb);
-AETHER_API b8         ring_buffer_read(RingBuffer* rb, void* dst, u64 len);
-AETHER_API b8         ring_buffer_write(RingBuffer* rb, const void* src, u64 len);
-AETHER_API b8         ring_buffer_advance_read(RingBuffer* rb, u64 len);
 AETHER_API bytes_view ring_buffer_peek(RingBuffer* rb, u64 len);
+AETHER_API b8         ring_buffer_advance_read(RingBuffer* rb, u64 len);
+AETHER_API b8         ring_buffer_read(RingBuffer* rb, void* dst, u64 len);
+AETHER_API bytes      ring_buffer_reserve(RingBuffer* rb, u64 len);
+AETHER_API void       ring_buffer_cancel_reservation(RingBuffer* rb);
+AETHER_API b8         ring_buffer_commit(RingBuffer* rb, u64 len);
+AETHER_API b8         ring_buffer_write(RingBuffer* rb, const void* src, u64 len);
 
 /*-------- S T R I N G S -----------------------------------------------------*/
 
@@ -1481,7 +1496,6 @@ AETHER_API RingBuffer ring_buffer_alloc(u64 size)
     {
         os_mem_release(rb.base, ring_size);
         FATAL("Failed to split RingBuffer\n");
-
     }
 
     u8* base = (u8*)os_mem_map_ring(rb.base, ring_size);
@@ -1502,10 +1516,11 @@ AETHER_API void ring_buffer_release(RingBuffer* rb)
 {
     if (!rb || !rb->base) return;
     os_mem_release_ring(rb->base, rb->size);
-    rb->base  = NULL;
-    rb->size  = 0;
-    rb->read  = 0;
-    rb->write = 0;
+    rb->base     = NULL;
+    rb->size     = 0;
+    rb->read     = 0;
+    rb->write    = 0;
+    rb->reserved = 0;
 }
 
 AETHER_API u64 ring_buffer_available(RingBuffer* rb)
@@ -1514,51 +1529,6 @@ AETHER_API u64 ring_buffer_available(RingBuffer* rb)
     u64 read  = atomic_load_acq_u64(&rb->read);
     u64 write = atomic_load_acq_u64(&rb->write);
     return write - read;
-}
-
-AETHER_API b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len)
-{
-    if (!rb || !rb->base) return false;
-    if (len == 0) return true;
-
-    bytes_view view = ring_buffer_peek(rb, len);
-    if (!view.size) return false;
-
-    memcpy(dst, view.data, view.size);
-    ring_buffer_advance_read(rb, view.size);
-
-    return true;
-}
-
-AETHER_API b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len)
-{
-    if (!rb || !rb->base) return false;
-    if (len > rb->size ) return false;
-
-    u64 read  = atomic_load_acq_u64(&rb->read);
-    u64 write = rb->write;
-
-    /* reject if it will overwrite unread data */
-    if (len > rb->size - (write - read)) return false;
-
-    memcpy(rb->base + (write & (rb->size - 1)), src, len);
-
-    atomic_store_rel_u64(&rb->write, write + len);
-    return true;
-}
-
-AETHER_API b8  ring_buffer_advance_read(RingBuffer* rb, u64 len)
-{
-    if (!rb || !rb->base) return false;
-
-    u64 write = atomic_load_acq_u64(&rb->write);
-    u64 read  = rb->read;
-
-    if (len > write - read) return false;
-
-    atomic_store_rel_u64(&rb->read, read + len);
-
-    return true;
 }
 
 AETHER_API bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
@@ -1576,6 +1546,83 @@ AETHER_API bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
     }
     return v;
 }
+
+AETHER_API b8  ring_buffer_advance_read(RingBuffer* rb, u64 len)
+{
+    if (!rb || !rb->base) return false;
+
+    u64 write = atomic_load_acq_u64(&rb->write);
+    u64 read  = rb->read;
+
+    if (len > write - read) return false;
+
+    atomic_store_rel_u64(&rb->read, read + len);
+
+    return true;
+}
+
+AETHER_API b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len)
+{
+    if (!rb || !rb->base) return false;
+    if (len == 0) return true;
+
+    bytes_view view = ring_buffer_peek(rb, len);
+    if (!view.size) return false;
+
+    memcpy(dst, view.data, view.size);
+    ring_buffer_advance_read(rb, view.size);
+
+    return true;
+}
+
+AETHER_API bytes ring_buffer_reserve(RingBuffer* rb, u64 len)
+{
+    bytes out = {0};
+    if (!rb || !rb->base)  return out;
+    if (len > rb->size )   return out;
+    if (rb->reserved != 0) return out;
+
+    u64 read  = atomic_load_acq_u64(&rb->read);
+    u64 write = rb->write;
+
+    /* reject if it will overwrite unread data */
+    if (len > rb->size - (write - read)) return out;
+
+    out.data = rb->base + (write & (rb->size - 1));
+    out.size = len;
+    rb->reserved = len;
+    return out;
+}
+
+AETHER_API void ring_buffer_cancel_reservation(RingBuffer* rb)
+{
+    if (!rb || !rb->base) return;
+    rb->reserved = 0;
+}
+
+AETHER_API b8 ring_buffer_commit(RingBuffer* rb, u64 len)
+{
+    if (!rb || !rb->base)   return false;
+    if (len > rb->reserved) return false; /* can't commit more than was validated */
+
+    u64 write = rb->write;
+    atomic_store_rel_u64(&rb->write, write + len);
+    rb->reserved = 0;
+    return true;
+}
+
+AETHER_API b8 ring_buffer_write(RingBuffer* rb, const void* src, u64 len)
+{
+    if (!rb || !rb->base) return false;
+    if (len == 0) return true;
+
+    bytes dst = ring_buffer_reserve(rb, len);
+    if (!dst.data) return false;
+
+    memcpy(dst.data, src, len);
+    return ring_buffer_commit(rb, len);
+}
+
 
 /* ------------------------------------------------------------------------- */
 /* --- S T R I N G S ------------------------------------------------------- */
