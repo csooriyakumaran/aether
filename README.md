@@ -497,26 +497,32 @@ The requested capacity is rounded up to a power of two that is at least the OS a
 
 ### Layout
 
-| FIELD | DESCRIPTION                                                      |
-| ----- | ---------------------------------------------------------------- |
-| base  | Base of the lower mapped view (the mirror lives at `base + size`) |
-| size  | Capacity in bytes (power of two ≥ allocation granularity)        |
-| read  | Monotonically increasing read cursor (masked by `size` on access) |
-| write | Monotonically increasing write cursor (masked by `size` on access) |
+| FIELD    | DESCRIPTION                                                      |
+| -------- | ---------------------------------------------------------------- |
+| read     | Monotonically increasing read cursor (masked by `size` on access) |
+| write    | Monotonically increasing write cursor (masked by `size` on access) |
+| reserved | Length of the outstanding `reserve()`, or `0` if none            |
+| base     | Base of the lower mapped view (the mirror lives at `base + size`) |
+| size     | Capacity in bytes (power of two ≥ allocation granularity)        |
 
 `read` and `write` are ever-increasing counters; bytes available to read is simply `write - read`, and free space is `size - (write - read)`. They are masked to an index only at the moment of access, which keeps "full" and "empty" unambiguous and stays correct across 64-bit overflow.
 
+`read` is mutated only by the consumer thread; `write`/`reserved`/`base`/`size` only by the producer thread (or not at all, after `alloc`). The struct is laid out and cache-line aligned (`AETHER_ALIGN`, `AETHER_CACHE_LINE_SIZE`) so `read` lands on its own 64-byte line, separate from the producer-owned fields — this avoids false sharing between the two threads on every push/pop.
+
 ### API
 
-| FUNCTION              | DESCRIPTION                                                                                  |
-| --------------------- | -------------------------------------------------------------------------------------------- |
-| `ring_buffer_alloc`        | Reserve + map the mirrored region and return the `RingBuffer` by value. **Panics** (`FATAL`) on any failure (incl. pre-1803 Windows). |
-| `ring_buffer_available`    | Bytes currently ready to read (`write - read`).                                              |
-| `ring_buffer_write`        | Copy `len` bytes in. Rejects (returns `false`) if `len` exceeds free space or total capacity. |
-| `ring_buffer_peek`         | Return a contiguous `bytes_view` of `len` bytes **without** consuming. `{0}` if `len` unavailable. |
-| `ring_buffer_read`         | Copy `len` bytes out and advance the read cursor. Returns `false` if `len` unavailable; `len == 0` succeeds as a no-op. |
-| `ring_buffer_advance_read` | Advance the read cursor by `len` **without** copying (zero-copy consume). `false` if `len` exceeds available. |
-| `ring_buffer_release`      | Unmap both views, free the reservation, and zero the struct.                                 |
+| FUNCTION                     | DESCRIPTION                                                                                  |
+| ----------------------------- | --------------------------------------------------------------------------------------------- |
+| `ring_buffer_alloc`           | Reserve + map the mirrored region and return the `RingBuffer` by value. **Panics** (`FATAL`) on any failure (incl. pre-1803 Windows). |
+| `ring_buffer_available`       | Bytes currently ready to read (`write - read`).                                              |
+| `ring_buffer_write`           | Copy `len` bytes in. Rejects (returns `false`) if `len` exceeds free space or total capacity. |
+| `ring_buffer_reserve`         | Return a writable `bytes` span of `len` bytes without publishing it. `{0}` if `len` exceeds free space/capacity, or a reservation is already outstanding. |
+| `ring_buffer_commit`          | Publish `len <= reserved` bytes from the outstanding reservation, advancing the write cursor. `false` if nothing is reserved or `len` exceeds it. |
+| `ring_buffer_cancel_reservation` | Drop the outstanding reservation without publishing anything.                             |
+| `ring_buffer_peek`            | Return a contiguous `bytes_view` of `len` bytes **without** consuming. `{0}` if `len` unavailable. |
+| `ring_buffer_read`            | Copy `len` bytes out and advance the read cursor. Returns `false` if `len` unavailable; `len == 0` succeeds as a no-op. |
+| `ring_buffer_advance_read`    | Advance the read cursor by `len` **without** copying (zero-copy consume). `false` if `len` exceeds available. |
+| `ring_buffer_release`         | Unmap both views, free the reservation, and zero the struct.                                 |
 
 ```c
 /* rounded up to a power of two >= 64 KiB; panics on failure */
@@ -566,7 +572,39 @@ Two things make this safe and convenient:
 - **The span stays valid for the whole call.** The producer can never write past the read cursor, and you do not advance `read` until *after* `send()` returns — so the producer cannot overwrite the in-flight bytes. Advancing by the returned count (not by what you peeked) also handles partial sends correctly. The general rule: a peeked view is valid only until the matching `advance_read` — after that the producer may overwrite those bytes, so never touch a view past that point.
 
 > [!NOTE]
-> The buffer is thread-safe for **exactly one producer thread and one consumer thread** — the `read`/`write` cursors are published with acquire/release atomics, so this pairing needs no external locking. More than one producer or more than one consumer requires external synchronization.
+> The buffer is thread-safe for **exactly one producer thread and one consumer thread** — the `read`/`write` cursors are published with acquire/release atomics, so this pairing needs no external locking. More than one producer or more than one consumer requires external synchronization. `reserve`/`commit`/`cancel_reservation` additionally support only **one outstanding reservation at a time** on the producer side — call `commit` (or `cancel_reservation`) before the next `reserve`.
+
+### Reserve/commit: fill in place, then publish
+
+When a message is built up from several pieces — a header written after the payload's length is known, say — `reserve` avoids staging into a temporary buffer first: get a pointer to the next `len` bytes, fill it in any order, then `commit` to publish. Nothing is visible to the consumer (`ring_buffer_available` doesn't move) until `commit` runs.
+
+```c
+bytes msg = ring_buffer_reserve(&rb, sizeof(Header) + payload_len);
+if (!msg.data)
+{
+    /* not enough room; try later or apply backpressure */
+}
+else
+{
+    memcpy(msg.data + sizeof(Header), payload, payload_len);   /* payload first: */
+    Header* h = (Header*)msg.data;                              /* length is known now */
+    h->payload_len = payload_len;
+
+    ring_buffer_commit(&rb, sizeof(Header) + payload_len);      /* publish both at once */
+}
+```
+
+`commit` may publish fewer bytes than were reserved — reserve a worst-case size and commit only what was actually used:
+
+```c
+bytes scratch = ring_buffer_reserve(&rb, MAX_MSG_SIZE);
+u64 used = encode(scratch.data, MAX_MSG_SIZE, ...);
+ring_buffer_commit(&rb, used);                 /* unused tail of the reservation is discarded */
+```
+
+If the message can't be completed after all (an encode error, say), `ring_buffer_cancel_reservation(&rb)` drops it without touching `write` — the freed span is available to the next `reserve`.
+
+`ring_buffer_write` is implemented on top of this same `reserve` + `commit` pair, so both paths share one definition of "is there room" — there is no separate check to fall out of sync.
 
 # IRIS
 

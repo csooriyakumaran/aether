@@ -298,6 +298,200 @@ static void test_counter_wrap(void)
     ring_buffer_release(&rb);
 }
 
+/* reserve/commit is meant to replace write()'s single memcpy with "get a
+   chunk, fill it piecewise, publish it" -- prove the two halves land the
+   same bytes a plain write() would. */
+static void test_reserve_commit_roundtrip(void)
+{
+    SECTION("ring: reserve/commit fills piecewise and publishes on commit");
+
+    RingBuffer rb = ring_buffer_alloc(KB(4));
+
+    bytes r = ring_buffer_reserve(&rb, 48);
+    ASSERT(r.data != NULL && r.size == 48);
+    ASSERT(rb.write == 0);                      /* not published yet */
+    ASSERT(ring_buffer_available(&rb) == 0);     /* readers can't see it yet */
+
+    /* fill piecewise, out of order, the way application code would */
+    memset(r.data + 16, 0x22, 16);
+    memset(r.data,      0x11, 16);
+    memset(r.data + 32, 0x33, 16);
+
+    ASSERT(ring_buffer_commit(&rb, 48));
+    ASSERT(rb.write == 48);
+    ASSERT(ring_buffer_available(&rb) == 48);
+
+    u8 out[48];
+    ASSERT(ring_buffer_read(&rb, out, 48));
+    u8 expect[48];
+    memset(expect,      0x11, 16);
+    memset(expect + 16, 0x22, 16);
+    memset(expect + 32, 0x33, 16);
+    ASSERT(memcmp(out, expect, 48) == 0);
+
+    ring_buffer_release(&rb);
+}
+
+/* Same contiguity guarantee write() has at the wrap must hold for a
+   reserved span too, since both hand out a pointer into the same
+   double-mapped region. */
+static void test_reserve_seam(void)
+{
+    SECTION("ring: reserve/commit straddling the wrap stays contiguous");
+
+    RingBuffer rb = ring_buffer_alloc(KB(4));
+
+    u64 k = 8;
+    rb.read = rb.write = rb.size - k;           /* empty; write_idx = size - k */
+
+    bytes r = ring_buffer_reserve(&rb, 32);
+    ASSERT(r.data != NULL && r.size == 32);
+    for (u32 i = 0; i < 32; ++i) r.data[i] = (u8)(0x40 + i);
+    ASSERT(ring_buffer_commit(&rb, 32));
+    ASSERT(rb.base[0] == (u8)(0x40 + k));        /* tail visible at base[0] via mirror */
+
+    u8 out[32];
+    ASSERT(ring_buffer_read(&rb, out, 32));
+    for (u32 i = 0; i < 32; ++i) ASSERT(out[i] == (u8)(0x40 + i));
+
+    ring_buffer_release(&rb);
+}
+
+static void test_reserve_guards(void)
+{
+    SECTION("ring: reserve/commit reject misuse without corrupting state");
+
+    RingBuffer rb = ring_buffer_alloc(KB(4));
+
+    /* a request larger than the whole capacity is rejected up front */
+    bytes too_big = ring_buffer_reserve(&rb, rb.size + 1);
+    ASSERT(too_big.data == NULL && too_big.size == 0);
+
+    /* commit with nothing reserved is rejected */
+    ASSERT(!ring_buffer_commit(&rb, 1));
+    ASSERT(rb.write == 0);
+
+    /* a second reserve while one is outstanding is rejected -- it would
+       hand back the same span as the first, since write hasn't moved */
+    bytes first  = ring_buffer_reserve(&rb, 16);
+    bytes second = ring_buffer_reserve(&rb, 8);
+    ASSERT(first.data != NULL && first.size == 16);
+    ASSERT(second.data == NULL && second.size == 0);
+
+    /* committing more than was reserved is rejected; the reservation and
+       write cursor are both left untouched */
+    ASSERT(!ring_buffer_commit(&rb, 17));
+    ASSERT(rb.write == 0);
+    ASSERT(!ring_buffer_reserve(&rb, 1).data);   /* still blocked: 16 still outstanding */
+
+    ASSERT(ring_buffer_commit(&rb, 16));         /* the original reservation still commits */
+    ASSERT(rb.write == 16);
+
+    /* free-space boundary, same as write()'s: pretend the buffer is all
+       but 10 bytes full */
+    rb.read  = 0;
+    rb.write = rb.size - 10;
+    ASSERT(!ring_buffer_reserve(&rb, 11).data);  /* 11 > 10 free -> reject */
+    bytes fits = ring_buffer_reserve(&rb, 10);
+    ASSERT(fits.data != NULL && fits.size == 10);
+    ASSERT(ring_buffer_commit(&rb, 10));
+    ASSERT(rb.write == rb.size);                 /* now full */
+
+    /* NULL/released safety: no crash, no-op / failure return */
+    ASSERT(ring_buffer_reserve(NULL, 1).data == NULL);
+    ASSERT(!ring_buffer_commit(NULL, 1));
+    ring_buffer_cancel_reservation(NULL);
+
+    ring_buffer_release(&rb);
+}
+
+static void test_reserve_cancel(void)
+{
+    SECTION("ring: cancel_reservation drops a reservation without publishing");
+
+    RingBuffer rb = ring_buffer_alloc(KB(4));
+
+    bytes r = ring_buffer_reserve(&rb, 32);
+    ASSERT(r.data != NULL);
+
+    ring_buffer_cancel_reservation(&rb);
+    ASSERT(rb.write == 0);                        /* nothing published */
+
+    /* the slot is free again: a fresh reserve succeeds and a stale commit
+       for the cancelled length is rejected */
+    ASSERT(!ring_buffer_commit(&rb, 32));
+    bytes again = ring_buffer_reserve(&rb, 32);
+    ASSERT(again.data == r.data && again.size == 32);
+    ASSERT(ring_buffer_commit(&rb, 32));
+    ASSERT(rb.write == 32);
+
+    /* cancelling with nothing outstanding is a harmless no-op */
+    ring_buffer_cancel_reservation(&rb);
+    ASSERT(rb.write == 32);
+
+    ring_buffer_release(&rb);
+}
+
+/* commit() is allowed to publish less than was reserved (e.g. reserve a
+   worst-case size, commit only what was actually used). */
+static void test_reserve_partial_commit(void)
+{
+    SECTION("ring: commit may publish fewer bytes than reserved");
+
+    RingBuffer rb = ring_buffer_alloc(KB(4));
+
+    bytes r = ring_buffer_reserve(&rb, 64);
+    ASSERT(r.data != NULL);
+    memset(r.data, 0x55, 20);
+
+    ASSERT(ring_buffer_commit(&rb, 20));           /* used only 20 of the 64 reserved */
+    ASSERT(rb.write == 20);
+    ASSERT(ring_buffer_available(&rb) == 20);
+
+    /* the unused tail of the reservation is gone, not just unread -- the
+       next reserve starts right after what was actually committed */
+    bytes next = ring_buffer_reserve(&rb, 8);
+    ASSERT(next.data == rb.base + 20);
+
+    ring_buffer_release(&rb);
+}
+
+/* Regression: a zero-length write() must not disturb an outstanding
+   reservation from a concurrent-in-appearance (but same-thread) reserve()
+   call -- write() used to route len==0 through commit() unconditionally,
+   which zeroed rb.reserved out from under the real reservation. */
+static void test_write_zero_preserves_reservation(void)
+{
+    SECTION("ring: zero-length write() does not clobber a pending reservation");
+
+    RingBuffer rb = ring_buffer_alloc(KB(4));
+
+    bytes r = ring_buffer_reserve(&rb, 16);
+    ASSERT(r.data != NULL);
+
+    ASSERT(ring_buffer_write(&rb, "", 0));         /* must be a true no-op */
+    ASSERT(rb.write == 0);
+
+    memset(r.data, 0x77, 16);
+    ASSERT(ring_buffer_commit(&rb, 16));           /* the real reservation still lands */
+    ASSERT(rb.write == 16);
+
+    ring_buffer_release(&rb);
+}
+
+/* Structural: read and write must not share a cache line, since they are
+   mutated by different threads (consumer vs. producer) -- that was the
+   whole point of the AETHER_ALIGN placement in the struct. */
+static void test_cache_line_layout(void)
+{
+    SECTION("ring: read/write cursors are separated onto different cache lines");
+
+    ASSERT(offsetof(RingBuffer, write) - offsetof(RingBuffer, read) >= AETHER_CACHE_LINE_SIZE);
+    ASSERT(offsetof(RingBuffer, read)  % AETHER_CACHE_LINE_SIZE == 0);
+    ASSERT(offsetof(RingBuffer, write) % AETHER_CACHE_LINE_SIZE == 0);
+    ASSERT(_Alignof(RingBuffer) >= AETHER_CACHE_LINE_SIZE);
+}
+
 /* --- SPSC stress ----------------------------------------------------------
    Producer and consumer on real OS threads, moving ~32 MB through a 64 KiB
    ring in randomly sized chunks. Both threads generate the same PRNG byte
@@ -485,6 +679,13 @@ static TestCase g_cases[] = {
     {"guards",          test_guards},
     {"stream",          test_stream},
     {"counter_wrap",    test_counter_wrap},
+    {"reserve_commit_roundtrip", test_reserve_commit_roundtrip},
+    {"reserve_seam",            test_reserve_seam},
+    {"reserve_guards",          test_reserve_guards},
+    {"reserve_cancel",          test_reserve_cancel},
+    {"reserve_partial_commit",  test_reserve_partial_commit},
+    {"write_zero_preserves_reservation", test_write_zero_preserves_reservation},
+    {"cache_line_layout",       test_cache_line_layout},
     {"spsc_stress",     test_spsc_stress},
 };
 
