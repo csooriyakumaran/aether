@@ -397,6 +397,58 @@ A release store makes every memory operation before it visible before the store 
 
 The implementation sits on compiler intrinsics (`__iso_volatile` loads/stores plus a per-arch barrier on MSVC x64/ARM64; `__atomic` builtins on GCC/Clang), so there is no `<stdatomic.h>` / `<atomic>` dependency and the same functions compile as both C and C++. A 64-bit target is required and enforced with a compile-time assert.
 
+## Timers
+
+AETHER provides `time_mark`/`time_elapsed_sec` for one-off measurements, and `HighResTimer` for fixed-rate loop pacing (a physics step, a network tick, a render loop).
+
+```c
+u64 time_mark(void);
+f64 time_elapsed_sec(u64 start, u64 end);
+
+typedef struct HighResTimer
+{
+    u64   period_ticks;
+    u64   next_deadline;
+    u64   overrun;
+    u64   spin_margin;
+    void* os_timer;
+    b32   armed;
+} HighResTimer;
+```
+
+### API
+
+| FUNCTION                          | DESCRIPTION                                                                                   |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `high_res_timer_alloc(hz)`        | Allocate the OS timer resource and set the tick rate. The clock is **inert** — `wait` is a safe no-op until `arm` is called. |
+| `high_res_timer_set_rate(&t, hz)` | Change the tick rate. Only updates the period; does not resync phase, so an in-flight loop isn't disturbed by a rate change. |
+| `high_res_timer_arm(&t)`          | Start (or restart) the pacing clock: syncs the deadline to now and clears `overrun`. Returns the start-of-clock timestamp (comparable to `time_mark()`), so callers don't need to reach into `HighResTimer.next_deadline`. |
+| `high_res_timer_create(hz)`       | `alloc` + `arm` in one call, for the common case where the clock should start ticking immediately. |
+| `high_res_timer_wait(&t)`         | Block until the next deadline. Returns the number of periods missed (`0` if on time, or if called on a timer that hasn't been armed). |
+| `high_res_timer_release(&t)`      | Release the OS timer and zero the struct.                                                     |
+
+> [!NOTE]
+> `wait` blocks in two stages: an OS sleep for the coarse remainder of the interval, then a short spin (`spin_margin`, ~1ms of ticks) for the final approach — sleeping the whole interval would overshoot by however coarse the scheduler quantum is (~15.6 ms on Windows).
+
+Allocate the resource at startup, but defer starting the clock until the caller actually enters a timed loop:
+
+```c
+HighResTimer t = high_res_timer_alloc(60.0);   /* resource ready, not yet ticking */
+
+/* ... arbitrary startup work, no clock running ... */
+
+high_res_timer_arm(&t);                        /* clock starts now */
+while (running)
+{
+    /* ... one frame of work ... */
+    u64 missed = high_res_timer_wait(&t);
+    if (missed) { /* fell behind; missed full periods */ }
+}
+high_res_timer_release(&t);
+```
+
+For the common case where the loop starts immediately, `high_res_timer_create(hz)` collapses `alloc` + `arm` into one call.
+
 ## Threads
 
 AETHER provides a minimal OS-thread API — create, join, priority, yield, sleep — enough to put a producer and a consumer on their own threads without pulling in `<threads.h>` / `<thread>` or pthreads.
