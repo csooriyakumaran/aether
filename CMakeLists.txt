@@ -65,6 +65,7 @@ if (AETHER_BUILD_INSTALL)
     include(GNUInstallDirs)
 
     install(DIRECTORY include/aether DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(DIRECTORY include/iris   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/aether/aether-version.h
             DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/aether
     )

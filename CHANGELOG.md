@@ -3,6 +3,11 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.15] - 2026-08-07
+
+### Fixed
+- **iris** headers were never installed: the top-level `install(DIRECTORY ...)` rule only covered `include/aether`, so `cmake --install` (and the release script's zip built from it) silently omitted `include/iris/iris.h`. Present in the `0.0.14` release archive as a missing header — a mirrored `install(DIRECTORY include/iris ...)` rule fixes it.
+
 ## [0.0.14] - 2026-08-07
 
 ### Added
