@@ -2,7 +2,8 @@
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-## [Unreleased] 
+
+## [0.0.14] - 2026-08-07
 
 ### Added
 - **iris**: new networking library (`include\iris\iris.h`), Windows-only for now (POSIX branches are labeledas `#error` stubs). Process-wide lifetime via `net_init`/`net_shutdown`, which pin and dynamically load `ws2_32.dll` at runtime (`LoadLibraryExW` + `GetProcAddress`) - no `-lws2_32` link dependency, mirroring aether's `VirtualAlloc2` runtime-loading pattern. Address construction: `NetAddr` (IPv4, wire-order `ip[4]` + host-order `port`), `net_addr` / `net_addr_any` / `net_addr_loopback`, `net_addr_parse` (numeric dotted-quad only, no DNS). `Socket` is a `{ u64 handle }` with a `+1` bias so `{0}` is invalid, matching aether's zero-init-is-empty convention.
