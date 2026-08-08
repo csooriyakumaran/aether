@@ -100,6 +100,23 @@ foreach(case ${NETWORKING_TEST_CASES})
     add_test(NAME iris_${case} COMMAND test_networking ${case})
 endforeach()
 
+add_executable(test_timer
+    test_timer.c
+)
+
+target_link_libraries(test_timer
+    PRIVATE
+        aether::aether
+)
+
+set(TIMER_TEST_CASES alloc_basic wait_without_arm_is_safe arm_sets_state create_convenience
+    wait_paces_interval wait_reports_overrun rearm_resets_overrun_and_phase
+    set_rate_changes_period_only release_clears_state)
+
+foreach(case ${TIMER_TEST_CASES})
+    add_test(NAME timer_${case} COMMAND test_timer ${case})
+endforeach()
+
 add_executable(test_console_signal
     test_console_signal.c
 )
