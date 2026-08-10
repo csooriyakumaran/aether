@@ -3,6 +3,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `str8_to_int(s, min, max, out)`: bounded-range signed integer parsing — delegates to `str8_to_i64` for the actual digit parsing/overflow handling, then rejects the result if it falls outside `[min, max]`. Added because call sites kept re-deriving the same "parse as `u64`, range-check, downcast" pattern by hand (e.g. `iris`'s octet and port parsing).
+- `str8_to_u8` / `str8_to_u16` / `str8_to_u32` and `str8_to_i8` / `str8_to_i16` / `str8_to_i32`: thin typed wrappers over `str8_to_int` with fixed bounds (`AETHER_U8_MAX_`, `AETHER_I16_MIN_`/`MAX_`, etc.), mirroring the `arena_alloc` / `arena_alloc_ex` convention — general bounded core, narrow convenience wrappers on top. `str8_to_u64` and `str8_to_i64` are unchanged and stay standalone: `U64_MAX` doesn't fit in the `i64` range `str8_to_int` works in, so the 64-bit parsers can't be expressed as wrappers over it.
+
 ## [0.0.16] - 2026-08-09
 
 ### Added
