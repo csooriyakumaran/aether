@@ -657,8 +657,18 @@ AETHER_API str8      str8_to_lower(Arena* arena, str8_view s);
 AETHER_API str8      str8_replace(Arena* arena, str8_view s, str8_view old, str8_view target); /* split + join*/
 
 // --- parsing --- 
+AETHER_API b8        str8_to_int(str8_view s, i64 min, i64 max, i64* out);
+
+AETHER_API b8        str8_to_u8(str8_view s,  u8* out);
+AETHER_API b8        str8_to_u16(str8_view s, u16* out);
+AETHER_API b8        str8_to_u32(str8_view s, u32* out);
 AETHER_API b8        str8_to_u64(str8_view s, u64* out);
+
+AETHER_API b8        str8_to_i8(str8_view s,  i8* out);
+AETHER_API b8        str8_to_i16(str8_view s, i16* out);
+AETHER_API b8        str8_to_i32(str8_view s, i32* out);
 AETHER_API b8        str8_to_i64(str8_view s, i64* out);
+
 AETHER_API b8        str8_to_f64(str8_view s, f64* out); /* limits to 64 character */
 
 // --- paths --- 
@@ -2169,6 +2179,71 @@ AETHER_API b8 str8_to_i64(str8_view s, i64* out)
     if ( sign == -1 && v > (u64)I64_MAX + 1) return false;
 
     *out = (i64)(sign == -1 ? (u64)0 - v : v);
+    return true;
+}
+
+AETHER_API b8 str8_to_int(str8_view s, i64 min, i64 max, i64* out)
+{
+    i64 v;
+    if (!str8_to_i64(s, &v)) return false;
+    if (v < min || v > max) return false;
+
+    *out = v;
+    return true;
+}
+
+
+AETHER_API b8 str8_to_u8(str8_view s,  u8* out)
+{
+    i64 v;
+    if (!str8_to_int(s, 0, AETHER_U8_MAX_, &v)) return false;
+
+    *out = (u8)v;
+    return true;
+}
+
+AETHER_API b8 str8_to_u16(str8_view s, u16* out)
+{
+    i64 v;
+    if (!str8_to_int(s, 0, AETHER_U16_MAX_, &v)) return false;
+
+    *out = (u16)v;
+    return true;
+}
+
+AETHER_API b8 str8_to_u32(str8_view s, u32* out)
+{
+    i64 v;
+    if (!str8_to_int(s, 0, AETHER_U32_MAX_, &v)) return false;
+
+    *out = (u32)v;
+    return true;
+}
+
+AETHER_API b8 str8_to_i8(str8_view s,  i8* out)
+{
+    i64 v;
+    if (!str8_to_int(s, AETHER_I8_MIN_, AETHER_I8_MAX_, &v)) return false;
+
+    *out = (i8)v;
+    return true;
+}
+
+AETHER_API b8 str8_to_i16(str8_view s, i16* out)
+{
+    i64 v;
+    if (!str8_to_int(s, AETHER_I16_MIN_, AETHER_I16_MAX_, &v)) return false;
+
+    *out = (i16)v;
+    return true;
+}
+
+AETHER_API b8 str8_to_i32(str8_view s, i32* out)
+{
+    i64 v;
+    if (!str8_to_int(s, AETHER_I32_MIN_, AETHER_I32_MAX_, &v)) return false;
+
+    *out = (i32)v;
     return true;
 }
 
