@@ -3,7 +3,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.16] - 2026-08-09
 
 ### Added
 - `HighResTimer` now tracks the actual wake instant: a new `wake_time` field is set on every `high_res_timer_wait` call — to `now` on the missed-deadline path (exact, since no sleep/spin happens there) and to the last spin-sampled timestamp on the normal path. Callers get the pacing timestamp for free instead of taking a second, separate `time_mark()` after `wait()` returns.
