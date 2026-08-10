@@ -48,7 +48,31 @@ static void test_alloc_basic(void)
     ASSERT(t.spin_margin > 0);
     ASSERT(t.next_deadline == 0);
     ASSERT(t.overrun == 0);
+    ASSERT(t.wake_time == 0);
     ASSERT(t.armed == 0);
+
+    high_res_timer_release(&t);
+}
+
+static void test_alloc_clamps_spin_margin_at_high_rate(void)
+{
+    SECTION("high_res_timer_alloc: spin_margin is clamped to half the period at high rates");
+
+    /* 5kHz -> period ~= 200us, well under the fixed 1ms margin used at low rates */
+    HighResTimer t = high_res_timer_alloc(5000.0);
+    ASSERT(t.spin_margin > 0);
+    ASSERT(t.spin_margin <= t.period_ticks / 2);
+
+    high_res_timer_release(&t);
+}
+
+static void test_alloc_uses_fixed_margin_at_low_rate(void)
+{
+    SECTION("high_res_timer_alloc: spin_margin stays at 1ms once the period is large enough");
+
+    HighResTimer t = high_res_timer_alloc(100.0);  /* period = 10ms, well above 2ms */
+    u64 expected_margin = os_time_frequency() / 1000;
+    ASSERT(t.spin_margin == expected_margin);
 
     high_res_timer_release(&t);
 }
@@ -62,6 +86,7 @@ static void test_wait_without_arm_is_safe(void)
     ASSERT(misses == 0);
     ASSERT(t.overrun == 0);
     ASSERT(t.next_deadline == 0);   /* wait() must not touch it while unarmed */
+    ASSERT(t.wake_time == 0);
 
     high_res_timer_release(&t);
 }
@@ -128,6 +153,41 @@ static void test_wait_reports_overrun(void)
     high_res_timer_release(&t);
 }
 
+static void test_wait_sets_wake_time_on_success(void)
+{
+    SECTION("high_res_timer_wait: wake_time samples the actual spin-exit instant, at or after the deadline");
+
+    HighResTimer t = high_res_timer_create(100.0);
+
+    u64 before   = time_mark();
+    u64 deadline = t.next_deadline + t.period_ticks;
+    high_res_timer_wait(&t);
+    u64 after    = time_mark();
+
+    ASSERT(t.wake_time >= deadline);   /* spin loop never exits before the deadline */
+    ASSERT(t.wake_time >= before && t.wake_time <= after);
+
+    high_res_timer_release(&t);
+}
+
+static void test_wait_sets_wake_time_on_overrun(void)
+{
+    SECTION("high_res_timer_wait: a missed deadline sets wake_time to the exact call-time sample");
+
+    HighResTimer t = high_res_timer_create(1000.0);  /* 1ms period, easy to overshoot */
+    thread_sleep_ms(30);
+
+    u64 before = time_mark();
+    u64 misses = high_res_timer_wait(&t);
+    u64 after  = time_mark();
+
+    ASSERT(misses > 0);
+    ASSERT(t.wake_time == t.next_deadline);  /* miss path sets both to the same sampled "now" */
+    ASSERT(t.wake_time >= before && t.wake_time <= after);
+
+    high_res_timer_release(&t);
+}
+
 static void test_rearm_resets_overrun_and_phase(void)
 {
     SECTION("high_res_timer_arm: re-arming clears accumulated overrun and resyncs phase");
@@ -174,6 +234,7 @@ static void test_release_clears_state(void)
     ASSERT(t.period_ticks == 0);
     ASSERT(t.next_deadline == 0);
     ASSERT(t.overrun == 0);
+    ASSERT(t.wake_time == 0);
     ASSERT(t.armed == 0);
 
     u64 misses = high_res_timer_wait(&t);
@@ -182,15 +243,19 @@ static void test_release_clears_state(void)
 
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
-    {"alloc_basic",                    test_alloc_basic},
-    {"wait_without_arm_is_safe",       test_wait_without_arm_is_safe},
-    {"arm_sets_state",                 test_arm_sets_state},
-    {"create_convenience",             test_create_convenience},
-    {"wait_paces_interval",            test_wait_paces_interval},
-    {"wait_reports_overrun",           test_wait_reports_overrun},
-    {"rearm_resets_overrun_and_phase", test_rearm_resets_overrun_and_phase},
-    {"set_rate_changes_period_only",   test_set_rate_changes_period_only},
-    {"release_clears_state",           test_release_clears_state},
+    {"alloc_basic",                        test_alloc_basic},
+    {"alloc_clamps_spin_margin_high_rate", test_alloc_clamps_spin_margin_at_high_rate},
+    {"alloc_uses_fixed_margin_low_rate",   test_alloc_uses_fixed_margin_at_low_rate},
+    {"wait_without_arm_is_safe",           test_wait_without_arm_is_safe},
+    {"arm_sets_state",                     test_arm_sets_state},
+    {"create_convenience",                 test_create_convenience},
+    {"wait_paces_interval",                test_wait_paces_interval},
+    {"wait_reports_overrun",               test_wait_reports_overrun},
+    {"wait_sets_wake_time_on_success",     test_wait_sets_wake_time_on_success},
+    {"wait_sets_wake_time_on_overrun",     test_wait_sets_wake_time_on_overrun},
+    {"rearm_resets_overrun_and_phase",     test_rearm_resets_overrun_and_phase},
+    {"set_rate_changes_period_only",       test_set_rate_changes_period_only},
+    {"release_clears_state",               test_release_clears_state},
 };
 
 int main(int argc, char** argv)

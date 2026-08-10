@@ -60,6 +60,75 @@ static void test_context(void)
     ASSERT(IRIS_OS_WINDOWS);   /* the only supported OS today; widen with the port */
 }
 
+/* --- address parsing ----------------------------------------------------*/
+
+static void test_parse_hostport(void)
+{
+    SECTION("iris: net_addr_parse_hostport -- ip, ip:port, localhost, and rejects");
+
+    NetAddr addr = {0};
+    ASSERT(net_addr_parse_hostport(STR("192.168.0.1"), 80, &addr));
+    ASSERT(addr.ip[0] == 192 && addr.ip[1] == 168 && addr.ip[2] == 0 && addr.ip[3] == 1);
+    ASSERT(addr.port == 80);   /* no ":" in the string -> falls back to default_port */
+
+    NetAddr addr_with_port = {0};
+    ASSERT(net_addr_parse_hostport(STR("192.168.0.1:23"), 80, &addr_with_port));
+    ASSERT(addr_with_port.ip[3] == 1);
+    ASSERT(addr_with_port.port == 23);  /* string port overrides default_port */
+
+    NetAddr local = {0};
+    ASSERT(net_addr_parse_hostport(STR("localhost"), 8080, &local));
+    ASSERT(local.ip[0] == 127 && local.ip[1] == 0 && local.ip[2] == 0 && local.ip[3] == 1);
+    ASSERT(local.port == 8080);
+
+    NetAddr local_port = {0};
+    ASSERT(net_addr_parse_hostport(STR("LOCALHOST:9000"), 0, &local_port));  /* case-insensitive */
+    ASSERT(local_port.ip[0] == 127 && local_port.ip[3] == 1);
+    ASSERT(local_port.port == 9000);
+
+    NetAddr out = {0};
+    ASSERT(!net_addr_parse_hostport(STR("192.168.0.1:99999"), 80, &out));  /* port exceeds u16 */
+    ASSERT(!net_addr_parse_hostport(STR("192.168.0.1:abc"), 80, &out));    /* non-numeric port */
+    ASSERT(!net_addr_parse_hostport(STR("not.an.ip"), 80, &out));          /* bad octets, no localhost match */
+}
+
+static void test_parse_hostport_trailing_colon_is_rejected(void)
+{
+    SECTION("iris: net_addr_parse_hostport -- trailing ':' with no port is malformed, not a default-port shorthand");
+
+    /* Unlike a URL parser (RFC 3986 lets an empty port after ':' mean "use the
+     * scheme default"), this is a low-level address parser with no scheme/default
+     * to fall back on -- matches net_addr_parse's existing strict-empty-field
+     * rejection for octets, and str8_to_u64's rejection of empty input. */
+    NetAddr out = {0};
+    ASSERT(!net_addr_parse_hostport(STR("192.168.0.1:"), 80, &out));
+    ASSERT(!net_addr_parse_hostport(STR("localhost:"), 80, &out));
+}
+
+/* --- address formatting -------------------------------------------------*/
+
+static void test_addr_to_cstr_and_str8(void)
+{
+    SECTION("iris: net_addr_to_cstr / net_addr_to_str8 -- formats and truncates safely");
+
+    NetAddr addr = net_addr(192, 168, 0, 1, 8080);
+
+    char full[NET_ADDR_STR_MAX];
+    u32 full_len = net_addr_to_cstr(addr, full, sizeof(full));
+    ASSERT(full_len == (u32)strlen(full));
+    ASSERT(strcmp(full, "192.168.0.1:8080") == 0);
+
+    char tiny[6];
+    u32 want_len = net_addr_to_cstr(addr, tiny, sizeof(tiny));
+    ASSERT(want_len == full_len);              /* snprintf reports the untruncated length */
+    ASSERT(strlen(tiny) == sizeof(tiny) - 1);  /* but the buffer itself is safely truncated + NUL-terminated */
+
+    Arena* arena = arena_alloc(KB(4));
+    str8 s = net_addr_to_str8(arena, addr);
+    ASSERT(str8_eq(view_from_str8(s), STR("192.168.0.1:8080")));
+    arena_release(arena);
+}
+
 /* --- tcp round trip ---------------------------------------------------- */
 
 static void test_tcp_roundtrip(void)
@@ -142,9 +211,12 @@ static void test_udp_roundtrip(void)
 
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
-    {"context",        test_context},
-    {"tcp_roundtrip",  test_tcp_roundtrip},
-    {"udp_roundtrip",  test_udp_roundtrip},
+    {"context",                       test_context},
+    {"parse_hostport",                test_parse_hostport},
+    {"parse_hostport_trailing_colon", test_parse_hostport_trailing_colon_is_rejected},
+    {"addr_to_cstr_and_str8",         test_addr_to_cstr_and_str8},
+    {"tcp_roundtrip",                 test_tcp_roundtrip},
+    {"udp_roundtrip",                 test_udp_roundtrip},
 };
 
 int main(int argc, char** argv)
