@@ -706,6 +706,18 @@ AETHER_API HighResTimer high_res_timer_create(f64 hz);
 AETHER_API u64          high_res_timer_wait(HighResTimer* t);
 AETHER_API void         high_res_timer_release(HighResTimer* t);
 
+typedef struct datetime
+{
+    u16 year;
+    u8  month, day, hour, minute, second;
+    u64 ns;
+} datetime;
+
+AETHER_API u64      wall_clock_ns(void);
+AETHER_API datetime datetime_now(void);
+AETHER_API datetime datetime_from_ns_since_epoch(u64 ns);
+AETHER_API b8       datetime_to_ns_since_epoch(datetime dt, u64* out);
+
 /* ------- T H R E A D S  -------------------------------------------------- */
 
 typedef int (*thread_fn)(void* user);
@@ -1167,6 +1179,18 @@ internal void os_timer_release(void* h)
     CloseHandle(h);
 #else
     #error "AETHER: OS release timer not implemented for this platform"
+#endif
+}
+
+internal u64 os_wall_clock_ns(void )
+{
+#if AETHER_OS_WINDOWS
+    FILETIME ft;
+    GetSystemTimePreciseAsFileTime(&ft);
+    u64 ticks = ((u64)ft.dwHighDateTime << 32) | ft.dwLowDateTime; /* 100 ns ticks since 1601-01-01 */
+    return (ticks - 116444736000000000ull) * 100ull; /* -> ns since 1970-01-01 (well-known FILETIME/Unix epock offset) */
+#else
+    #error "AETHER: OS wall clock not implemented for this platform"
 #endif
 }
 
@@ -2467,6 +2491,91 @@ AETHER_API void high_res_timer_release(HighResTimer* t)
     t->wake_time     = 0;
     t->armed         = 0;
     return;
+}
+
+internal b8 is_leap_year_(u32 year) { return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0); }
+
+internal u8 days_in_month_(u32 year, u32 month)
+{
+    local_persist const u8 days[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month == 2 && is_leap_year_(year)) return 29;
+    return days[month-1];
+}
+/* Hinnant Algorithm */
+internal i64 days_from_civil_(i32 y, u32 m, u32 d)
+{
+    y -= (m <= 2);
+    i64 era = (y >= 0 ? y : y - 399) / 400;
+    u32 yoe = (u32)(y - era * 400);
+    u32 doy = (153*(m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    u32 doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era*146097 + (i64)doe - 719468; /* days since epoch (1970-01-01) */
+}
+
+internal void civil_from_days_(i64 days, i32* y, u32* m, u32* d)
+{
+    days += 719468;
+    i64 era = (days >= 0 ? days: days - 146096) / 146097;
+    u32 doe = (u32)(days - era * 146097);
+    u32 yoe = (doe - doe / 1460 + doe / 36524 - doe/146096) / 365;
+    i32 y_  = (i32)yoe + (i32)(era * 400);
+    u32 doy = doe - (365*yoe + yoe/4 - yoe/100);
+    u32 mp  = (5*doy + 2) /153;
+    *d = doy - (153*mp+2)/5 + 1;
+    *m = mp + (mp < 10 ? 3: 3 - 12);
+    *y = y_ + (*m <= 2);
+}
+
+AETHER_API u64 wall_clock_ns(void)
+{
+    return os_wall_clock_ns();
+}
+
+AETHER_API datetime datetime_from_ns_since_epoch(u64 ns)
+{
+    u64 secs = ns / 1000000000ull;
+    u64 days = secs / 86400ull;
+    u64 tod  = secs % 86400ull;
+
+    i32 y; u32 m, d;
+    civil_from_days_((i64)days, &y, &m, &d);
+
+    datetime dt;
+    dt.year   = (u16)y;
+    dt.month  = (u8)m;
+    dt.day    = (u8)d;
+    dt.hour   = (u8)(tod / 3600);
+    dt.minute = (u8)((tod % 3600) / 60);
+    dt.second = (u8)(tod % 60);
+    dt.ns     = ns % 1000000000ull;
+
+    return dt;
+}
+
+AETHER_API b8 datetime_to_ns_since_epoch(datetime dt, u64* out)
+{
+    if (!out) return false;
+
+    if (dt.month < 1 || dt.month > 12) return false;
+    if (dt.day   < 1 || dt.day > days_in_month_(dt.year, dt.month)) return false;
+    if (dt.hour  > 23) return false;
+    if (dt.minute > 59) return false;
+    if (dt.second > 59) return false;
+    if (dt.ns     > 999999999ull) return false;
+
+    i64 days = days_from_civil_(dt.year, dt.month, dt.day);
+    if (days < 0) return false; /* pre-1970 -- not representable as unsigned ns-since-epoch */
+
+    u64 secs = (u64)days * 86400ull + dt.hour*3600ull + dt.minute*60ull + dt.second;
+    if (secs > (U64_MAX - dt.ns) / 1000000000ull) return false; /* would overflow, e.g. year ~2554+ */
+
+    *out = secs * 1000000000ull + dt.ns;
+    return true;
+}
+
+AETHER_API datetime datetime_now(void)
+{
+    return datetime_from_ns_since_epoch(wall_clock_ns());
 }
 
 /*---------------------------------------------------------------------------*/
