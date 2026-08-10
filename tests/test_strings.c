@@ -439,6 +439,31 @@ static void test_parse(void)
     ASSERT(!str8_to_f64(STR("1.5x"), &f)); /* trailing junk rejected */
 }
 
+static void test_parse_bases(void)
+{
+    SECTION("str8_to_u64 / str8_to_i64: 0x/0o/0b literals alongside decimal");
+
+    u64 u = 0;
+    ASSERT(str8_to_u64(STR("0x1A"), &u)    && u == 26);
+    ASSERT(str8_to_u64(STR("0X1a"), &u)    && u == 26);   /* prefix and digits both case-insensitive */
+    ASSERT(str8_to_u64(STR("0o17"), &u)    && u == 15);
+    ASSERT(str8_to_u64(STR("0b1010"), &u)  && u == 10);
+    ASSERT(str8_to_u64(STR("007"), &u)     && u == 7);    /* no C-style implicit octal on a bare leading 0 */
+    ASSERT(str8_to_u64(STR("0xFFFFFFFFFFFFFFFF"), &u) && u == U64_MAX);
+    ASSERT(!str8_to_u64(STR("0x10000000000000000"), &u)); /* one hex digit past 64 bits -> overflow */
+    ASSERT(!str8_to_u64(STR("0b2"), &u));    /* '2' isn't a valid base-2 digit */
+    ASSERT(!str8_to_u64(STR("0o8"), &u));    /* '8' isn't a valid base-8 digit */
+    ASSERT(!str8_to_u64(STR("0xg"), &u));    /* 'g' isn't a valid hex digit */
+    ASSERT(!str8_to_u64(STR("0x"), &u));     /* prefix with no digits */
+
+    i64 i = 0;
+    ASSERT(str8_to_i64(STR("-0x1A"), &i) && i == -26);   /* sign applies across the base prefix */
+    ASSERT(str8_to_i64(STR("+0x1A"), &i) && i == 26);
+    ASSERT(str8_to_i64(STR("0x7FFFFFFFFFFFFFFF"), &i)  && i == I64_MAX);
+    ASSERT(str8_to_i64(STR("-0x8000000000000000"), &i) && i == I64_MIN);
+    ASSERT(!str8_to_i64(STR("0x8000000000000000"), &i)); /* one past I64_MAX in hex */
+}
+
 static void test_parse_int_range(void)
 {
     SECTION("str8_to_int: str8_to_i64 + [min, max] bounds check");
@@ -533,6 +558,7 @@ static TestCase g_cases[] = {
     {"case_convert",  test_case_convert},
     {"replace",       test_replace},
     {"parse",         test_parse},
+    {"parse_bases",        test_parse_bases},
     {"parse_int_range",    test_parse_int_range},
     {"parse_int_wrappers", test_parse_int_wrappers},
     {"view_sources",  test_view_sources},

@@ -92,6 +92,25 @@ static void test_parse_hostport(void)
     ASSERT(!net_addr_parse_hostport(STR("not.an.ip"), 80, &out));          /* bad octets, no localhost match */
 }
 
+static void test_parse_rejects_non_decimal_literals(void)
+{
+    SECTION("iris: net_addr_parse / net_addr_parse_hostport -- octets and ports are decimal-only");
+
+    /* str8_to_u64 also accepts 0x/0o/0b literals (aether's general integer
+     * syntax) -- net_addr's "numeric only" contract means plain decimal, so
+     * these must still be rejected even though str8_to_u64 itself would accept
+     * them (see test_parse_bases in test_strings.c). */
+    NetAddr addr = {0};
+    ASSERT(!net_addr_parse(STR("0x1.0x2.0x3.0x4"), 0, &addr));
+    ASSERT(!net_addr_parse(STR("0.0.0.0x1"), 0, &addr));
+    ASSERT(!net_addr_parse_hostport(STR("192.168.0.1:0x50"), 0, &addr));
+    ASSERT(!net_addr_parse_hostport(STR("192.168.0.1:0b101"), 0, &addr));
+
+    /* a bare leading zero on an octet/port is still plain decimal, not octal */
+    ASSERT(net_addr_parse(STR("010.0.0.1"), 0, &addr) && addr.ip[0] == 10);
+    ASSERT(net_addr_parse_hostport(STR("192.168.0.1:080"), 0, &addr) && addr.port == 80);
+}
+
 static void test_parse_hostport_trailing_colon_is_rejected(void)
 {
     SECTION("iris: net_addr_parse_hostport -- trailing ':' with no port is malformed, not a default-port shorthand");
@@ -213,6 +232,7 @@ typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"context",                       test_context},
     {"parse_hostport",                test_parse_hostport},
+    {"parse_rejects_non_decimal",     test_parse_rejects_non_decimal_literals},
     {"parse_hostport_trailing_colon", test_parse_hostport_trailing_colon_is_rejected},
     {"addr_to_cstr_and_str8",         test_addr_to_cstr_and_str8},
     {"tcp_roundtrip",                 test_tcp_roundtrip},
