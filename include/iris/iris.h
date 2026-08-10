@@ -230,12 +230,16 @@ extern "C"
 IRIS_API b8   net_init(void);
 IRIS_API void net_shutdown(void);
 
-typedef struct NetAddr { u8 ip[4]; u16 port; } NetAddr;       /* ip wire-order, port host-order */
+#define NET_ADDR_STR_MAX 22 /* 255.255.255.255:65535 + NUL */
+typedef struct NetAddr { u8 ip[4]; u16 port; } NetAddr;      /* ip wire-order, port host-order */
 
 IRIS_API NetAddr net_addr(u8 a, u8 b, u8 c, u8 d, u16 port); 
 IRIS_API NetAddr net_addr_any(u16 port);                    /* 0.0.0.0 - all interfaces */
 IRIS_API NetAddr net_addr_loopback(u16 port);               /* 127.0.0.1                */
 IRIS_API b8      net_addr_parse(str8_view ip, u16 port, NetAddr* out); /* numeric only, no DNS */
+IRIS_API b8      net_addr_parse_hostport(str8_view s, u16 default_port, NetAddr* out);
+IRIS_API u32     net_addr_to_cstr(NetAddr addr, char *buf, u64 buf_size);
+IRIS_API str8    net_addr_to_str8(Arena* arena, NetAddr addr);
 
 typedef struct Socket { u64 handle; } Socket; /* {0} = invalid */
 
@@ -641,6 +645,47 @@ IRIS_API b8 net_addr_parse(str8_view ip, u16 port, NetAddr* out)
 
     *out = net_addr(octets[0], octets[1], octets[2], octets[3], port);
     return true;
+}
+
+IRIS_API b8 net_addr_parse_hostport(str8_view s, u16 default_port, NetAddr* out)
+{
+    if (!out) return false;
+
+    str8_view host = s;
+    u16       port = default_port;
+
+    str8_view before, after;
+    if (str8_cut(s, STR(":"), &before, &after))
+    {
+        u64 v;
+        if (after.size == 0 || after.size > 5) return false;
+        if (!str8_to_u64(after, &v) || v > AETHER_U16_MAX_) return false;
+        host = before;
+        port = (u16)v;
+    }
+
+    if (str8_eq_nocase(host, STR("localhost")))
+    {
+        *out = net_addr_loopback(port);
+        return true;
+    }
+
+    return net_addr_parse(host, port, out);
+}
+
+IRIS_API u32 net_addr_to_cstr(NetAddr addr, char* buf, u64 buf_size)
+{
+    int n = snprintf(buf, buf_size, "%u.%u.%u.%u:%u",
+                     addr.ip[0], addr.ip[1], addr.ip[2], addr.ip[3], addr.port);
+
+    return (u32)n;
+}
+
+IRIS_API str8 net_addr_to_str8(Arena* arena, NetAddr addr)
+{
+    char buf[NET_ADDR_STR_MAX];
+    net_addr_to_cstr(addr, buf, sizeof(buf));
+    return str8_push_c_str(arena, buf);
 }
 
 IRIS_API b8 socket_valid(Socket s)
