@@ -2130,19 +2130,33 @@ AETHER_API b8 str8_to_u64(str8_view s, u64* out)
 {
     if (s.size == 0) return false;
 
+    u64 i = 0;
+    if (s.data[0] == '+') i = 1;
+
+    int base = 10;
+    if (s.size >= i + 2 && s.data[i] == '0')
+    {
+        if      (s.data[i+1] == 'x' || s.data[i+1] == 'X') { base = 16; i += 2; }
+        else if (s.data[i+1] == 'o' || s.data[i+1] == 'O') { base = 8;  i += 2; }
+        else if (s.data[i+1] == 'b' || s.data[i+1] == 'B') { base = 2;  i += 2; }
+    }
+
     u64 v = 0;
     b8 has_digit = false;
-    for (u64 i = 0; i < s.size; ++i)
+    for (; i < s.size; ++i)
     {
         u8 c = s.data[i];
-        if (i == 0 && c == '-') return false;
-        if (i == 0 && c == '+') continue;
-        if (c < '0' || c > '9') return false;
+        u8 d;
 
-        u8 d = c - '0';
+        if      (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'z') d = 10 + (c - 'a');
+        else if (c >= 'A' && c <= 'Z') d = 10 + (c - 'A');
+        else return false;
 
-        if ( v > (U64_MAX - d) / 10 ) return false; /* would overflow */
-        v = v * 10 + d;
+        if (d >= (u8)base) return false; /* rejects e.g. '2' in a 0b literal, 'g' in hex, etx. */
+
+        if ( v > (U64_MAX - d) / (u64)base ) return false; /* would overflow */
+        v = v * (u64)base + d;
         has_digit = true;
     }
 
@@ -2156,21 +2170,36 @@ AETHER_API b8 str8_to_i64(str8_view s, i64* out)
 {
     if (s.size == 0) return false;
 
-    u64 v = 0;
+    u64 i = 0;
     i64 sign = 1;
+
+    if      (s.data[0] == '-') { sign = -1; i = 1 ;}
+    else if (s.data[0] == '+') { i = 1; }
+
+    int base = 10;
+    if (s.size >= i + 2 && s.data[i] == '0')
+    {
+        if      (s.data[i+1] == 'x' || s.data[i+1] == 'X') { base = 16; i += 2; }
+        else if (s.data[i+1] == 'o' || s.data[i+1] == 'O') { base = 8;  i += 2; }
+        else if (s.data[i+1] == 'b' || s.data[i+1] == 'B') { base = 2;  i += 2; }
+    }
+
+    u64 v = 0;
     b8 has_digit = false;
-    for (u64 i = 0; i < s.size; ++i) 
+    for (; i < s.size; ++i) 
     {
         u8 c = s.data[i];
+        u8 d;
 
-        if (i == 0 && c == '-') { sign = -1; continue; }
-        if (i == 0 && c == '+') continue;
-        if (c < '0' || c > '9') return false;
+        if      (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'z') d = 10 + (c - 'a');
+        else if (c >= 'A' && c <= 'Z') d = 10 + (c - 'A');
+        else return false;
 
-        u8 d = c - '0';
+        if (d >= (u8)base) return false; /* rejects e.g. '2' in a 0b literal, 'g' in hex, etx. */
 
-        if ( v > (U64_MAX - d) / 10 ) return false;
-        v = v * 10 + d;
+        if ( v > (U64_MAX - d) / (u64)base ) return false;
+        v = v * (u64)base + d;
         has_digit = true;
     }
     
