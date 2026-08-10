@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - `str8_to_int(s, min, max, out)`: bounded-range signed integer parsing — delegates to `str8_to_i64` for the actual digit parsing/overflow handling, then rejects the result if it falls outside `[min, max]`. Added because call sites kept re-deriving the same "parse as `u64`, range-check, downcast" pattern by hand (e.g. `iris`'s octet and port parsing).
 - `str8_to_u8` / `str8_to_u16` / `str8_to_u32` and `str8_to_i8` / `str8_to_i16` / `str8_to_i32`: thin typed wrappers over `str8_to_int` with fixed bounds (`AETHER_U8_MAX_`, `AETHER_I16_MIN_`/`MAX_`, etc.), mirroring the `arena_alloc` / `arena_alloc_ex` convention — general bounded core, narrow convenience wrappers on top. `str8_to_u64` and `str8_to_i64` are unchanged and stay standalone: `U64_MAX` doesn't fit in the `i64` range `str8_to_int` works in, so the 64-bit parsers can't be expressed as wrappers over it.
+- `str8_to_u64` / `str8_to_i64` gain `0x` / `0o` / `0b`-prefixed integer literal parsing (case-insensitive prefix and hex digits) alongside plain decimal, sharing the existing overflow-safe digit accumulation across all bases. Sign and base prefix compose correctly (`"-0x8000000000000000"` parses to `I64_MIN`); a bare leading zero with no prefix (`"007"`) is still decimal, not C-style implicit octal.
+
+### Fixed
+- iris: `net_addr_parse` / `net_addr_parse_hostport` now reject `0x`/`0o`/`0b`-prefixed octets and ports. `str8_to_u64`'s new multi-base literal support (above) would otherwise let e.g. `"0x1.0x2.0x3.0x4"` parse as a valid address and `"192.168.0.1:0x50"` parse as port 80 — outside the "numeric only" (decimal) contract `net_addr_parse` documents. Guarded by a new private `str8_is_decimal_` pre-check ahead of the `str8_to_u64` call; plain leading-zero decimal (`"010"`, `"080"`) is unaffected.
 
 ## [0.0.16] - 2026-08-09
 
