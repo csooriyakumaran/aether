@@ -439,6 +439,62 @@ static void test_parse(void)
     ASSERT(!str8_to_f64(STR("1.5x"), &f)); /* trailing junk rejected */
 }
 
+static void test_parse_int_range(void)
+{
+    SECTION("str8_to_int: str8_to_i64 + [min, max] bounds check");
+
+    i64 v = 0;
+    ASSERT(str8_to_int(STR("50"), 0, 100, &v)     && v == 50);
+    ASSERT(str8_to_int(STR("0"), 0, 100, &v)      && v == 0);    /* inclusive lower bound */
+    ASSERT(str8_to_int(STR("100"), 0, 100, &v)    && v == 100);  /* inclusive upper bound */
+    ASSERT(!str8_to_int(STR("-1"), 0, 100, &v));                 /* below min */
+    ASSERT(!str8_to_int(STR("101"), 0, 100, &v));                /* above max */
+    ASSERT(str8_to_int(STR("-50"), -100, 100, &v) && v == -50);  /* negative bounds work */
+    ASSERT(!str8_to_int(STR("abc"), 0, 100, &v));                /* parse failure passes through */
+    ASSERT(!str8_to_int(STR(""), 0, 100, &v));
+}
+
+static void test_parse_int_wrappers(void)
+{
+    SECTION("str8_to_u8/u16/u32, str8_to_i8/i16/i32: fixed-bound wrappers over str8_to_int");
+
+    u8 u8v;
+    ASSERT(str8_to_u8(STR("0"), &u8v)   && u8v == 0);
+    ASSERT(str8_to_u8(STR("255"), &u8v) && u8v == U8_MAX);
+    ASSERT(!str8_to_u8(STR("256"), &u8v));  /* overflow */
+    ASSERT(!str8_to_u8(STR("-1"), &u8v));   /* unsigned rejects negative */
+
+    u16 u16v;
+    ASSERT(str8_to_u16(STR("0"), &u16v)     && u16v == 0);
+    ASSERT(str8_to_u16(STR("65535"), &u16v) && u16v == U16_MAX);
+    ASSERT(!str8_to_u16(STR("65536"), &u16v));
+    ASSERT(!str8_to_u16(STR("-1"), &u16v));
+
+    u32 u32v;
+    ASSERT(str8_to_u32(STR("0"), &u32v)          && u32v == 0);
+    ASSERT(str8_to_u32(STR("4294967295"), &u32v) && u32v == U32_MAX);
+    ASSERT(!str8_to_u32(STR("4294967296"), &u32v));
+    ASSERT(!str8_to_u32(STR("-1"), &u32v));
+
+    i8 i8v;
+    ASSERT(str8_to_i8(STR("-128"), &i8v) && i8v == I8_MIN);
+    ASSERT(str8_to_i8(STR("127"), &i8v)  && i8v == I8_MAX);
+    ASSERT(!str8_to_i8(STR("-129"), &i8v));
+    ASSERT(!str8_to_i8(STR("128"), &i8v));
+
+    i16 i16v;
+    ASSERT(str8_to_i16(STR("-32768"), &i16v) && i16v == I16_MIN);
+    ASSERT(str8_to_i16(STR("32767"), &i16v)  && i16v == I16_MAX);
+    ASSERT(!str8_to_i16(STR("-32769"), &i16v));
+    ASSERT(!str8_to_i16(STR("32768"), &i16v));
+
+    i32 i32v;
+    ASSERT(str8_to_i32(STR("-2147483648"), &i32v) && i32v == I32_MIN);
+    ASSERT(str8_to_i32(STR("2147483647"), &i32v)  && i32v == I32_MAX);
+    ASSERT(!str8_to_i32(STR("-2147483649"), &i32v));
+    ASSERT(!str8_to_i32(STR("2147483648"), &i32v));
+}
+
 static void test_view_sources(void)
 {
     SECTION("view_from_c_str / view_from_raw");
@@ -477,6 +533,8 @@ static TestCase g_cases[] = {
     {"case_convert",  test_case_convert},
     {"replace",       test_replace},
     {"parse",         test_parse},
+    {"parse_int_range",    test_parse_int_range},
+    {"parse_int_wrappers", test_parse_int_wrappers},
     {"view_sources",  test_view_sources},
 };
 
