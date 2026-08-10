@@ -684,6 +684,7 @@ typedef struct HighResTimer
     u64   next_deadline;
     u64   overrun;
     u64   spin_margin;
+    u64   wake_time;
     void* os_timer;
     b32   armed;
 } HighResTimer;
@@ -2286,9 +2287,11 @@ AETHER_API HighResTimer high_res_timer_alloc(f64 hz)
     void* os_timer = os_create_timer();
     if (!os_timer) { FATAL("Failed to create platform timer"); return t; }
 
+    u64 default_spin = os_time_frequency() / 1000;
+
     t.os_timer      = os_timer;
-    t.spin_margin   = os_time_frequency() / 1000;
     t.period_ticks  = (u64)((f64)os_time_frequency() / hz + 0.5);
+    t.spin_margin   = AETHER_MIN_(default_spin, t.period_ticks / 2);
 
     return t;
 }
@@ -2333,14 +2336,18 @@ AETHER_API u64 high_res_timer_wait(HighResTimer* t)
         u64 misses = 1 + (now - t->next_deadline) / t->period_ticks;
         t->overrun += misses;
         t->next_deadline = now;
+        t->wake_time = now;
         return misses;
     }
 
     if (t->next_deadline > now + t->spin_margin)
         os_timer_sleep(t->os_timer, t->next_deadline - now - t->spin_margin);
 
-    while (os_time_now() < t->next_deadline)
+    u64 wake;
+    while ((wake = os_time_now()) < t->next_deadline)
         os_cpu_relax();
+
+    t->wake_time = wake;
 
     return 0;
 }
@@ -2353,6 +2360,7 @@ AETHER_API void high_res_timer_release(HighResTimer* t)
     t->period_ticks  = 0;
     t->next_deadline = 0;
     t->overrun       = 0;
+    t->wake_time     = 0;
     t->armed         = 0;
     return;
 }
