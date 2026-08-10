@@ -616,6 +616,22 @@ IRIS_API NetAddr net_addr(u8 a, u8 b, u8 c, u8 d, u16 port)
 IRIS_API NetAddr net_addr_any(u16 port)      { return net_addr(0, 0, 0, 0, port); }
 IRIS_API NetAddr net_addr_loopback(u16 port) { return net_addr(127, 0, 0, 1, port); }
 
+/* str8_to_u64 also accepts 0x/0o/0b literals (aether's general integer syntax) --
+ * that's not the surface net_addr's "numeric only" contract means to expose, so
+ * octets/ports are pre-validated as plain decimal digits before conversion. */
+internal b8 str8_is_decimal_(str8_view s)
+{
+    if (s.size == 0) return false;
+
+    u64 i = (s.data[0] == '+') ? 1 : 0;
+    if (i >= s.size) return false;   /* sign with no digits */
+
+    for (; i < s.size; ++i)
+        if (s.data[i] < '0' || s.data[i] > '9') return false;
+
+    return true;
+}
+
 IRIS_API b8 net_addr_parse(str8_view ip, u16 port, NetAddr* out)
 {
     if (!out) return false;
@@ -639,6 +655,7 @@ IRIS_API b8 net_addr_parse(str8_view ip, u16 port, NetAddr* out)
 
         u64 v;
         if (field.size == 0 || field.size > 3) return false;
+        if (!str8_is_decimal_(field)) return false;
         if (!str8_to_u64(field, &v) || v > 255) return false;
         octets[i] = (u8)v;
     }
@@ -659,6 +676,7 @@ IRIS_API b8 net_addr_parse_hostport(str8_view s, u16 default_port, NetAddr* out)
     {
         u64 v;
         if (after.size == 0 || after.size > 5) return false;
+        if (!str8_is_decimal_(after)) return false;
         if (!str8_to_u64(after, &v) || v > AETHER_U16_MAX_) return false;
         host = before;
         port = (u16)v;
