@@ -3,6 +3,16 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `HighResTimer` now tracks the actual wake instant: a new `wake_time` field is set on every `high_res_timer_wait` call — to `now` on the missed-deadline path (exact, since no sleep/spin happens there) and to the last spin-sampled timestamp on the normal path. Callers get the pacing timestamp for free instead of taking a second, separate `time_mark()` after `wait()` returns.
+- iris: `net_addr_parse_hostport(s, default_port, out)` parses `"ip"`, `"ip:port"`, `"localhost"`, or `"localhost:port"` (case-insensitive), delegating numeric-IP validation to the existing `net_addr_parse` and using `default_port` only when the string doesn't specify one. `net_addr_parse` itself is unchanged — still strictly numeric, no DNS.
+- iris: `net_addr_to_cstr(addr, buf, buf_size)` formats a `NetAddr` as `"a.b.c.d:port"` into a caller-owned buffer, no allocation; `net_addr_to_str8(arena, addr)` is an arena-backed convenience wrapper around it. New `NET_ADDR_STR_MAX` (22) sizes the longest possible formatted address.
+
+### Fixed
+- `high_res_timer_alloc`: `spin_margin` is now clamped to at most half the timer's period (`AETHER_MIN_(1ms, period_ticks / 2)`) instead of a fixed 1ms. At high tick rates (>1kHz) the old fixed margin could exceed the whole period, starving `os_timer_sleep` of a positive duration and forcing every wait into a full-period busy spin.
+
 ## [0.0.15] - 2026-08-07
 
 ### Fixed
