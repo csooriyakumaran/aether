@@ -586,6 +586,9 @@ static  inline str16_view view_from_str16(str16 s) { str16_view  v = {s.data, s.
 #define STR8_ARG(s) ((int)((s).size)), ((const char*)((s).data))
 #define STR8_FMT "%.*s"
 
+#define Str8ListForEach(list, node) \
+    for (Str8Node *node = (list).first; node != 0; node = node->next)
+
 typedef struct Str8Node Str8Node;
 struct Str8Node
 {
@@ -597,8 +600,8 @@ typedef struct Str8List
 {
     Str8Node* first;
     Str8Node* last;
-    u64        count;
-    u64        total_len;
+    u64       count;
+    u64       total_len;
 } Str8List;
 
 typedef struct Str8Array
@@ -612,6 +615,15 @@ enum Str8SplitFlags_
 {
     Str8SplitFlags_None      = 0u,
     Str8SplitFlags_SkipEmpty = BIT8(0),
+    Str8SplitFlags_Trim      = BIT8(1),
+};
+
+typedef u8 Str8CutFlags;
+enum Str8CutFlags_
+{
+    Str8CutFlags_None = 0u,
+    Str8CutFlags_Trim = BIT8(0),
+    Str8CutFlags_Last = BIT8(1),
 };
 
 // --- construction --- 
@@ -644,6 +656,7 @@ AETHER_API b8        str8_find_char(str8_view s, u8 c, u64* pos);
 AETHER_API i32       str8_cmp(str8_view a, str8_view b); /* memcmp-style ordering */
 
 // --- cut / split / list / join --- 
+AETHER_API b8        str8_cut_ex(str8_view s, str8_view sep, str8_view* before, str8_view* after, Str8CutFlags flags);
 AETHER_API b8        str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after);
 AETHER_API Str8List  str8_split(Arena* arena, str8_view s, str8_view sep, Str8SplitFlags flags);
 AETHER_API void      str8_list_push(Arena* arena, Str8List* list, str8_view v);
@@ -1969,33 +1982,39 @@ AETHER_API i32 str8_cmp(str8_view a, str8_view b)
     return 0;
 }
 
-AETHER_API b8 str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after)
+AETHER_API b8 str8_cut_ex(str8_view s, str8_view sep, str8_view* before, str8_view* after, Str8CutFlags flags)
 {
     AETHER_ASSERT_(s.data   != NULL || s.size   == 0);
     AETHER_ASSERT_(sep.data != NULL || sep.size == 0);
 
-    str8_view empty = {0};
+    str8_view b     = s;
+    str8_view a     = {0};
+    b8        found = false;
 
-    if (sep.size == 0 || sep.size > s.size)
+    if (sep.size != 0)
     {
-        if (before) *before = s;
-        if (after)  *after  = empty;
-        return false;
-    }
+        u64 pos;
+        found = (flags & Str8CutFlags_Last) ? str8_find_last(s, sep, &pos)
+                                            : str8_find(s, sep, &pos);
 
-    for (u64 i = 0; i + sep.size <= s.size; ++i)
-    {
-        if (memcmp(s.data + i, sep.data, sep.size) == 0)
+        if (found)
         {
-            if (before) *before = str8_slice(s, 0, i);
-            if (after)  *after  = str8_slice(s, i + sep.size, s.size);
-            return true;
+            b = str8_slice(s, 0, pos);
+            a = str8_slice(s, pos + sep.size, s.size);
         }
+
     }
 
-    if (before) *before = s;
-    if (after)  *after  = empty;
-    return false;
+    if (flags & Str8CutFlags_Trim) { b = str8_trim(b); a = str8_trim(a); }
+
+    if (before) *before = b;
+    if (after)  *after  = a;
+    return found;
+}
+
+AETHER_API b8 str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after)
+{
+    return str8_cut_ex(s, sep, before, after, Str8CutFlags_None);
 }
 
 AETHER_API Str8List str8_split(Arena* arena, str8_view s, str8_view sep, Str8SplitFlags flags)
@@ -2007,6 +2026,8 @@ AETHER_API Str8List str8_split(Arena* arena, str8_view s, str8_view sep, Str8Spl
     b8 more;
     do {
         more = str8_cut(rest, sep, &before, &rest);
+        if (flags & Str8SplitFlags_Trim)
+            before = str8_trim(before);
         if (before.size > 0 || !(flags & Str8SplitFlags_SkipEmpty))
             str8_list_push(arena, &list, before);
     } while (more);
@@ -2556,9 +2577,9 @@ AETHER_API b8 datetime_to_ns_since_epoch(datetime dt, u64* out)
 {
     if (!out) return false;
 
-    if (dt.month < 1 || dt.month > 12) return false;
-    if (dt.day   < 1 || dt.day > days_in_month_(dt.year, dt.month)) return false;
-    if (dt.hour  > 23) return false;
+    if (dt.month  < 1 || dt.month > 12) return false;
+    if (dt.day    < 1 || dt.day > days_in_month_(dt.year, dt.month)) return false;
+    if (dt.hour   > 23) return false;
     if (dt.minute > 59) return false;
     if (dt.second > 59) return false;
     if (dt.ns     > 999999999ull) return false;
