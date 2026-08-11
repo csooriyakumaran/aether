@@ -193,6 +193,72 @@ static void test_split(void)
     arena_release(arena);
 }
 
+static void test_split_trim_and_foreach(void)
+{
+    SECTION("Str8SplitFlags_Trim + Str8ListForEach: CSV-style records");
+
+    Arena* arena = arena_alloc(KB(4));
+
+    /* Trim: strips the whitespace a ", " delimiter style leaves behind */
+    Str8List trimmed = str8_split(arena, STR("a, b ,c"), STR(","), Str8SplitFlags_Trim);
+    ASSERT(trimmed.count == 3);
+    if (trimmed.count == 3) {
+        Str8Node* n = trimmed.first;
+        ASSERT(str8_eq(n->v, STR("a"))); n = n->next;
+        ASSERT(str8_eq(n->v, STR("b"))); n = n->next;
+        ASSERT(str8_eq(n->v, STR("c")));
+    }
+
+    /* Trim + SkipEmpty: trim happens first, so a whitespace-only field counts as empty */
+    Str8List trimmed_skip = str8_split(arena, STR("a, ,c"), STR(","),
+                                        Str8SplitFlags_Trim | Str8SplitFlags_SkipEmpty);
+    ASSERT(trimmed_skip.count == 2);
+    if (trimmed_skip.count == 2) {
+        ASSERT(str8_eq(trimmed_skip.first->v, STR("a")));
+        ASSERT(str8_eq(trimmed_skip.first->next->v, STR("c")));
+    }
+
+    /* Str8ListForEach over nested rows/fields, CRLF input, as in a CSV parser.
+       `r >= rows.count` / `c >= fields.count` are regression guards for the
+       node = node->next advance step: if that ever breaks, the loop fails
+       loudly on a wrong/repeated value instead of hanging the suite. */
+    str8_view csv = STR("name, age,city\r\n"
+                         "Ada, 32, London\r\n"
+                         "Grace,  49,New York\r\n");
+
+    Str8List rows = str8_split(arena, csv, STR("\n"),
+                                Str8SplitFlags_SkipEmpty | Str8SplitFlags_Trim);
+    ASSERT(rows.count == 3);
+
+    const char* expected[3][3] = {
+        {"name",  "age", "city"},
+        {"Ada",   "32",  "London"},
+        {"Grace", "49",  "New York"},
+    };
+
+    u64 r = 0;
+    Str8ListForEach(rows, row)
+    {
+        if (r >= rows.count) break;
+
+        Str8List fields = str8_split(arena, row->v, STR(","), Str8SplitFlags_Trim);
+        ASSERT(fields.count == 3);
+
+        u64 c = 0;
+        Str8ListForEach(fields, field)
+        {
+            if (c >= fields.count) break;
+            ASSERT(str8_eq(field->v, view_from_c_str(expected[r][c])));
+            c++;
+        }
+        ASSERT(c == 3);
+        r++;
+    }
+    ASSERT(r == 3);
+
+    arena_release(arena);
+}
+
 static void test_skip_drop(void)
 {
     SECTION("str8_skip / str8_drop: views without the first/last n bytes");
@@ -297,6 +363,53 @@ static void test_cut(void)
     ASSERT(after.size == 0);
 
     ASSERT(str8_cut(STR("a=b"), STR("="), NULL, NULL)); /* NULL outs are allowed */
+}
+
+static void test_cut_ex(void)
+{
+    SECTION("str8_cut_ex: str8_cut plus Str8CutFlags_Trim / Str8CutFlags_Last");
+
+    str8_view before, after;
+
+    /* Str8CutFlags_None behaves exactly like str8_cut (which is a thin wrapper over this) */
+    ASSERT(str8_cut_ex(STR("key=value"), STR("="), &before, &after, Str8CutFlags_None));
+    ASSERT(str8_eq(before, STR("key")));
+    ASSERT(str8_eq(after,  STR("value")));
+
+    /* Trim: applied to both sides, whether or not sep was found */
+    ASSERT(str8_cut_ex(STR("key = value"), STR("="), &before, &after, Str8CutFlags_Trim));
+    ASSERT(str8_eq(before, STR("key")));
+    ASSERT(str8_eq(after,  STR("value")));
+
+    ASSERT(!str8_cut_ex(STR("  no separator  "), STR("="), &before, &after, Str8CutFlags_Trim));
+    ASSERT(str8_eq(before, STR("no separator"))); /* miss path still trims `before` = whole input */
+    ASSERT(after.size == 0);
+
+    /* Last: cuts at the final occurrence instead of the first */
+    ASSERT(str8_cut_ex(STR("a/b/c.txt"), STR("/"), &before, &after, Str8CutFlags_None));
+    ASSERT(str8_eq(before, STR("a")));
+    ASSERT(str8_eq(after,  STR("b/c.txt")));
+
+    ASSERT(str8_cut_ex(STR("a/b/c.txt"), STR("/"), &before, &after, Str8CutFlags_Last));
+    ASSERT(str8_eq(before, STR("a/b")));
+    ASSERT(str8_eq(after,  STR("c.txt")));
+
+    ASSERT(str8_cut_ex(STR("a::b::c"), STR("::"), &before, &after, Str8CutFlags_Last)); /* multi-byte sep */
+    ASSERT(str8_eq(before, STR("a::b")));
+    ASSERT(str8_eq(after,  STR("c")));
+
+    /* Trim | Last together */
+    ASSERT(str8_cut_ex(STR("a / b / c.txt"), STR("/"), &before, &after,
+                        Str8CutFlags_Trim | Str8CutFlags_Last));
+    ASSERT(str8_eq(before, STR("a / b")));
+    ASSERT(str8_eq(after,  STR("c.txt")));
+
+    /* empty sep: never matches, regardless of flags (str8_cut's original contract) */
+    ASSERT(!str8_cut_ex(STR("abc"), STR(""), &before, &after, Str8CutFlags_Trim | Str8CutFlags_Last));
+    ASSERT(str8_eq(before, STR("abc")));
+    ASSERT(after.size == 0);
+
+    ASSERT(str8_cut_ex(STR("a=b"), STR("="), NULL, NULL, Str8CutFlags_Trim)); /* NULL outs are allowed */
 }
 
 static void test_concat(void)
@@ -547,12 +660,14 @@ static TestCase g_cases[] = {
     {"views",     test_views},
     {"c_str",     test_c_str},
     {"split",     test_split},
+    {"split_trim_foreach", test_split_trim_and_foreach},
     {"skip_drop",     test_skip_drop},
     {"trim_lr",       test_trim_lr},
     {"eq_nocase",     test_eq_nocase},
     {"prefix_suffix", test_prefix_suffix},
     {"find",          test_find},
     {"cut",           test_cut},
+    {"cut_ex",        test_cut_ex},
     {"concat",        test_concat},
     {"join",          test_join},
     {"case_convert",  test_case_convert},
