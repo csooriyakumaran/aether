@@ -708,6 +708,7 @@ typedef struct HighResTimer
     u64   overrun;
     u64   spin_margin;
     u64   wake_time;
+    u64   lateness;
     void* os_timer;
     b32   armed;
 } HighResTimer;
@@ -736,8 +737,8 @@ AETHER_API b8       datetime_to_ns_since_epoch(datetime dt, u64* out);
 typedef int (*thread_fn)(void* user);
 typedef struct Thread { void* handle; } Thread;
 
+//todo(chris): should these be typedef u8 if we're not treating them like a bit feild?
 typedef u8 ThreadPriority;
-
 enum ThreadPriority_
 {
     ThreadPriority_Normal = 0,
@@ -748,8 +749,20 @@ enum ThreadPriority_
 AETHER_API Thread thread_create(thread_fn fn, void* user);
 AETHER_API b8     thread_join(Thread* t, int* out_code);
 AETHER_API b8     thread_set_priority(Thread* t, ThreadPriority p);
+AETHER_API b8     thread_set_affinity(Thread* t, u32 core_index);
 AETHER_API void   thread_yield(void);
 AETHER_API void   thread_sleep_ms(u32 ms);
+
+//todo(chris): should these be typedef u8 if we're not treating them like a bit feild?
+typedef u8 ProcessPriorityClass;
+enum ProcessPriorityClass_
+{
+    ProcessPriorityClass_Normal = 0,
+    ProcessPriorityClass_High,
+    ProcessPriorityClass_Realtime, /* can starve the whole system if a thread in it spins -- use deliberately */
+};
+
+AETHER_API b8     process_set_priority_class(ProcessPriorityClass c);
 
 /* ------- C O N S O L E - S I G N A L - H A N D L I N G ------------------- */
 
@@ -1279,6 +1292,17 @@ internal b8 os_thread_set_priority(void* h, ThreadPriority p)
 #endif
 }
 
+internal b8 os_thread_set_affinity(void* h, u32 core_index)
+{
+#if AETHER_OS_WINDOWS
+    DWORD_PTR mask = (DWORD_PTR)1 << core_index;
+    return SetThreadAffinityMask((HANDLE)h, mask) != 0;
+
+#else
+    #error "AETHER: OS set thread affinity not implemented on this platform"
+#endif
+}
+
 internal void os_thread_sleep_ms(u32 ms)
 {
 #if AETHER_OS_WINDOWS
@@ -1294,6 +1318,18 @@ internal void os_thread_sleep_ms(u32 ms)
     CloseHandle(h);
 #else
     #error "AETHER: OS thread sleep ms not implemented on this platform"
+#endif
+}
+
+internal b8 os_process_set_priority_class(ProcessPriorityClass c)
+{
+#if AETHER_OS_WINDOWS
+    DWORD win = NORMAL_PRIORITY_CLASS;
+    if (c == ProcessPriorityClass_High)     win = HIGH_PRIORITY_CLASS;
+    if (c == ProcessPriorityClass_Realtime) win = REALTIME_PRIORITY_CLASS;
+    return SetPriorityClass(GetCurrentProcess(), win) != 0;
+#else
+    #error "AETHER: OS set process priority class not implemented on this platform"
 #endif
 }
 
@@ -2461,6 +2497,8 @@ AETHER_API u64 high_res_timer_arm(HighResTimer* t)
     t->next_deadline = mark;
     t->overrun       = 0;
     t->armed         = 1;
+    t->wake_time     = mark;
+    t->lateness      = 0;
 
     return mark;
 }
@@ -2479,6 +2517,7 @@ AETHER_API u64 high_res_timer_wait(HighResTimer* t)
 
     u64 now = os_time_now();
     t->next_deadline += t->period_ticks;
+    u64 target = t->next_deadline;
 
     if (t->next_deadline <= now)
     {
@@ -2486,6 +2525,7 @@ AETHER_API u64 high_res_timer_wait(HighResTimer* t)
         t->overrun += misses;
         t->next_deadline = now;
         t->wake_time = now;
+        t->lateness = now - target;
         return misses;
     }
 
@@ -2497,6 +2537,7 @@ AETHER_API u64 high_res_timer_wait(HighResTimer* t)
         os_cpu_relax();
 
     t->wake_time = wake;
+    t->lateness  = wake - target;
 
     return 0;
 }
@@ -2510,6 +2551,7 @@ AETHER_API void high_res_timer_release(HighResTimer* t)
     t->next_deadline = 0;
     t->overrun       = 0;
     t->wake_time     = 0;
+    t->lateness      = 0;
     t->armed         = 0;
     return;
 }
@@ -2626,6 +2668,12 @@ AETHER_API b8 thread_set_priority(Thread* t, ThreadPriority p)
     return os_thread_set_priority(t->handle, p);
 }
 
+AETHER_API b8 thread_set_affinity(Thread* t, u32 core_index)
+{
+    if (!t || !t->handle) return false;
+    return os_thread_set_affinity(t->handle, core_index);
+}
+
 AETHER_API void thread_yield(void)
 {
    os_thread_yield();
@@ -2634,6 +2682,11 @@ AETHER_API void thread_yield(void)
 AETHER_API void thread_sleep_ms(u32 ms)
 {
     os_thread_sleep_ms(ms);
+}
+
+AETHER_API b8 process_set_priority_class(ProcessPriorityClass c)
+{
+    return os_process_set_priority_class(c);
 }
 
 /*---------------------------------------------------------------------------*/
