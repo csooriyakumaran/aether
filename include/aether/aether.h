@@ -684,7 +684,20 @@ AETHER_API b8        str8_to_i64(str8_view s, i64* out);
 
 AETHER_API b8        str8_to_f64(str8_view s, f64* out); /* limits to 64 character */
 
-// --- paths --- 
+// --- utf8 --- (str8/str8_view stay plain bytes; these are opt-in decode
+// helpers for callers -- e.g. a terminal layer -- that need to walk
+// codepoint/column boundaries)
+
+typedef struct Utf8Decode
+{
+    u32 codepoint;
+    u8  len; /* bytes consumed from s.data[0]; 0 = invalid or empty input */
+} Utf8Decode;
+
+AETHER_API Utf8Decode utf8_decode(str8_view s);            /* decode codepoint at s.data[0] */
+AETHER_API u8         utf8_codepoint_width(u32 codepoint); /* terminal column width: 0, 1, or 2 */
+
+// --- paths ---
 // todo(chris): do this
 
 
@@ -2375,6 +2388,83 @@ AETHER_API b8 str8_to_f64(str8_view s, f64* out)
 
     *out = v;
     return true;
+}
+
+AETHER_API Utf8Decode utf8_decode(str8_view s)
+{
+    Utf8Decode d = {0};
+    if (s.size == 0) return d;
+
+    u8 b0 = s.data[0];
+    if (b0 < 0x80) { d.codepoint = b0; d.len = 1; return d; }
+
+    u8  len;
+    u32 cp;
+    if      ((b0 & 0xE0) == 0xC0) { len = 2; cp = b0 & 0x1F; }
+    else if ((b0 & 0xF0) == 0xE0) { len = 3; cp = b0 & 0x0F; }
+    else if ((b0 & 0xF8) == 0xF0) { len = 4; cp = b0 & 0x07; }
+    else return d; /* stray continuation byte or 0xF8-0xFF: invalid lead byte */
+
+    if (s.size < len) return d; /* truncated sequence */
+
+    for (u8 i = 1; i < len; ++i)
+    {
+        u8 b = s.data[i];
+        if ((b & 0xC0) != 0x80) return d; /* expected a continuation byte */
+        cp = (cp << 6) | (b & 0x3F);
+    }
+
+    local_persist const u32 min_cp_for_len_[5] = { 0, 0, 0x80, 0x800, 0x10000 };
+    if (cp < min_cp_for_len_[len]) return d;                        /* overlong encoding */
+    if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return d;   /* out of range / surrogate half */
+
+    d.codepoint = cp;
+    d.len       = len;
+    return d;
+}
+
+typedef struct Utf8WidthRange_ { u32 lo, hi; } Utf8WidthRange_;
+
+/* not full UAX #11 -- covers combining marks / zero-width joiners and the
+ * common CJK/Hangul/Kana/fullwidth/emoji blocks, which is what a terminal
+ * layer actually needs to get column math right for real-world text */
+internal const Utf8WidthRange_ utf8_zero_width_ranges_[] = {
+    { 0x0300,  0x036F  }, /* combining diacritical marks */
+    { 0x200B,  0x200F  }, /* zero-width space/joiners, LTR/RTL marks */
+    { 0x2028,  0x202E  }, /* line/paragraph separators, bidi controls */
+    { 0xFE00,  0xFE0F  }, /* variation selectors */
+    { 0xFEFF,  0xFEFF  }, /* BOM / zero-width no-break space */
+};
+
+internal const Utf8WidthRange_ utf8_wide_ranges_[] = {
+    { 0x1100,  0x115F  }, /* Hangul Jamo */
+    { 0x2E80,  0x303E  }, /* CJK radicals, symbols & punctuation */
+    { 0x3041,  0x33FF  }, /* Hiragana .. CJK compat */
+    { 0x3400,  0x4DBF  }, /* CJK unified ideographs ext A */
+    { 0x4E00,  0x9FFF  }, /* CJK unified ideographs */
+    { 0xA000,  0xA4CF  }, /* Yi */
+    { 0xAC00,  0xD7A3  }, /* Hangul syllables */
+    { 0xF900,  0xFAFF  }, /* CJK compatibility ideographs */
+    { 0xFF00,  0xFF60  }, /* fullwidth forms */
+    { 0xFFE0,  0xFFE6  }, /* fullwidth signs */
+    { 0x1F300, 0x1FAFF }, /* misc symbols, pictographs, emoji */
+    { 0x20000, 0x3FFFD }, /* CJK ext B+ / compatibility supplement */
+};
+
+internal b8 utf8_codepoint_in_ranges_(u32 cp, const Utf8WidthRange_* ranges, u64 count)
+{
+    for (u64 i = 0; i < count; ++i)
+        if (cp >= ranges[i].lo && cp <= ranges[i].hi) return true;
+    return false;
+}
+
+AETHER_API u8 utf8_codepoint_width(u32 codepoint)
+{
+    if (codepoint == 0) return 0;
+    if (codepoint < 0x20 || (codepoint >= 0x7F && codepoint < 0xA0)) return 0; /* C0/C1 controls */
+    if (utf8_codepoint_in_ranges_(codepoint, utf8_zero_width_ranges_, ARRAY_COUNT(utf8_zero_width_ranges_))) return 0;
+    if (utf8_codepoint_in_ranges_(codepoint, utf8_wide_ranges_, ARRAY_COUNT(utf8_wide_ranges_))) return 2;
+    return 1;
 }
 
 /* ------------------------------------------------------------------------- */
