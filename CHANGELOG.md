@@ -3,7 +3,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.17] - 2026-08-18
 
 ### Added
 - `str8_to_int(s, min, max, out)`: bounded-range signed integer parsing — delegates to `str8_to_i64` for the actual digit parsing/overflow handling, then rejects the result if it falls outside `[min, max]`. Added because call sites kept re-deriving the same "parse as `u64`, range-check, downcast" pattern by hand (e.g. `iris`'s octet and port parsing).
