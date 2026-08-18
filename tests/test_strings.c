@@ -650,6 +650,66 @@ static void test_view_sources(void)
     ASSERT(r.data == (const u8*)raw); /* borrow, not copy */
 }
 
+static void test_utf8_decode(void)
+{
+    SECTION("utf8_decode: byte-length + codepoint per sequence class");
+
+    Utf8Decode d;
+
+    d = utf8_decode(STR("A"));
+    ASSERT(d.len == 1 && d.codepoint == 0x41);
+
+    d = utf8_decode((str8_view){0});
+    ASSERT(d.len == 0);
+
+    d = utf8_decode(STR("\xC2\xA9"));           /* U+00A9 (c), 2-byte */
+    ASSERT(d.len == 2 && d.codepoint == 0xA9);
+
+    d = utf8_decode(STR("\xE2\x94\x80"));       /* U+2500, box-drawing, 3-byte */
+    ASSERT(d.len == 3 && d.codepoint == 0x2500);
+
+    d = utf8_decode(STR("\xF0\x9F\x98\x80"));   /* U+1F600, emoji, 4-byte */
+    ASSERT(d.len == 4 && d.codepoint == 0x1F600);
+
+    d = utf8_decode(STR("\xE2\x94"));           /* truncated 3-byte sequence */
+    ASSERT(d.len == 0);
+
+    d = utf8_decode(STR("\xFF"));               /* invalid lead byte */
+    ASSERT(d.len == 0);
+
+    d = utf8_decode(STR("\x80"));               /* stray continuation byte */
+    ASSERT(d.len == 0);
+
+    d = utf8_decode(STR("\xC0\x80"));           /* overlong encoding of NUL */
+    ASSERT(d.len == 0);
+
+    d = utf8_decode(STR("\xED\xA0\x80"));       /* U+D800, surrogate half */
+    ASSERT(d.len == 0);
+
+    /* trailing garbage after a valid sequence must not affect the decode */
+    d = utf8_decode(STR("\xE2\x94\x80rest"));
+    ASSERT(d.len == 3 && d.codepoint == 0x2500);
+}
+
+static void test_utf8_codepoint_width(void)
+{
+    SECTION("utf8_codepoint_width: 0/1/2 column classification");
+
+    ASSERT(utf8_codepoint_width(0)      == 0); /* NUL */
+    ASSERT(utf8_codepoint_width(0x07)   == 0); /* C0 control (BEL) */
+    ASSERT(utf8_codepoint_width(0x0301) == 0); /* combining acute accent */
+    ASSERT(utf8_codepoint_width(0x200D) == 0); /* zero-width joiner */
+
+    ASSERT(utf8_codepoint_width(0x41)   == 1); /* 'A' */
+    ASSERT(utf8_codepoint_width(0x2500) == 1); /* box-drawing -- must stay narrow */
+    ASSERT(utf8_codepoint_width(0x276F) == 1); /* prompt glyph used by layout.c */
+
+    ASSERT(utf8_codepoint_width(0x4E2D) == 2); /* CJK unified ideograph */
+    ASSERT(utf8_codepoint_width(0xAC00) == 2); /* Hangul syllable */
+    ASSERT(utf8_codepoint_width(0xFF21) == 2); /* fullwidth 'A' */
+    ASSERT(utf8_codepoint_width(0x1F600) == 2); /* emoji */
+}
+
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"eq",    test_eq},
@@ -677,6 +737,8 @@ static TestCase g_cases[] = {
     {"parse_int_range",    test_parse_int_range},
     {"parse_int_wrappers", test_parse_int_wrappers},
     {"view_sources",  test_view_sources},
+    {"utf8_decode",   test_utf8_decode},
+    {"utf8_width",    test_utf8_codepoint_width},
 };
 
 int main(int argc, char** argv)
