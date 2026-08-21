@@ -3,6 +3,13 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- `enum`s are now all `typedef`'d to fixed width integers
+- ***breaking** `local_persist` alias for `static` used in function bodies renamed -> `persist`.
+
+
 ## [0.0.17] - 2026-08-18
 
 ### Added
