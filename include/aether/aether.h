@@ -223,9 +223,9 @@
 
 /*---------------------------------------------------------------------------*/
 
-#define internal      static
-#define global        static
-#define local_persist static
+#define internal static
+#define global   static
+#define persist  static
 
 #include <stdio.h>
 #include <stddef.h>
@@ -482,11 +482,12 @@ enum ArenaFlags_ {
     ArenaFlags_DebugFillOnClear = BIT8(3)  /* On clear, set bytes to 0xDD for debugging      */
 };
 
-typedef enum ArenaZero {
+typedef u8 ArenaZero;
+enum ArenaZero_ {
     ArenaZero_FollowPolicy = 0,
     ArenaZero_Force        = 1,
     ArenaZero_Never        = 2
-} ArenaZero;
+};
 
 typedef struct Arena {
     u64 reserved_size;
@@ -2414,7 +2415,7 @@ AETHER_API Utf8Decode utf8_decode(str8_view s)
         cp = (cp << 6) | (b & 0x3F);
     }
 
-    local_persist const u32 min_cp_for_len_[5] = { 0, 0, 0x80, 0x800, 0x10000 };
+    persist const u32 min_cp_for_len_[5] = { 0, 0, 0x80, 0x800, 0x10000 };
     if (cp < min_cp_for_len_[len]) return d;                        /* overlong encoding */
     if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return d;   /* out of range / surrogate half */
 
@@ -2650,7 +2651,7 @@ internal b8 is_leap_year_(u32 year) { return (year % 4 == 0 && year % 100 != 0) 
 
 internal u8 days_in_month_(u32 year, u32 month)
 {
-    local_persist const u8 days[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    persist const u8 days[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
     if (month == 2 && is_leap_year_(year)) return 29;
     return days[month-1];
 }
