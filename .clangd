@@ -1,2 +1,13 @@
 CompileFlags:
+  Add: [-xc, -std=c11]
   CompilationDatabase: build
+---
+If:
+  PathMatch: .*aether\.h
+CompileFlags: 
+  Add: [-DAETHER_IMPLEMENTATION]
+---
+If:
+  PathMatch: .*iris\.h
+CompileFlags: 
+  Add: [-DIRIS_IMPLEMENTATION]
