@@ -5,9 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `utf8_width` to calculate the total terminal column width of a utf8 string. Correctly collapses codepoints joined by a zero-width-joiner (ZWJ), i.e., `U+200D`, as well as emoji skin-tone modifiers, i.e, `U+1F3FB-U+1F3FF`. Does not split lines on `\n`, so callers must decide behaviour and split before calling if desired. 
+
 ### Changed
 - `enum`s are now all `typedef`'d to fixed width integers
 - ***breaking** `local_persist` alias for `static` used in function bodies renamed -> `persist`.
+- `static` aliases `intenral`/`global`/`persist` in `aether.h` and `iris.h` now all defended by `#ifndef` guards in case either header changes the alias name both headers will still be internally consistent regardless of include order. 
 
 
 ## [0.0.17] - 2026-08-18
