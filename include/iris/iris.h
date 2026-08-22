@@ -214,6 +214,18 @@
     #include "aether/aether.h"
 #endif
 
+#ifndef internal
+    #define internal static
+#endif // internal
+
+#ifndef global
+    #define global   static
+#endif // global
+
+#ifndef persist
+    #define persist  static
+#endif // persist
+
 #if IRIS_LANG_CPP
 extern "C"
 {
