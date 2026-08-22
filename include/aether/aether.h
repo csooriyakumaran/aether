@@ -223,9 +223,17 @@
 
 /*---------------------------------------------------------------------------*/
 
-#define internal static
-#define global   static
-#define persist  static
+#ifndef internal
+    #define internal static
+#endif // internal
+
+#ifndef global
+    #define global   static
+#endif // global
+
+#ifndef persist
+    #define persist  static
+#endif // persist
 
 #include <stdio.h>
 #include <stddef.h>
@@ -695,8 +703,17 @@ typedef struct Utf8Decode
     u8  len; /* bytes consumed from s.data[0]; 0 = invalid or empty input */
 } Utf8Decode;
 
-AETHER_API Utf8Decode utf8_decode(str8_view s);            /* decode codepoint at s.data[0] */
-AETHER_API u8         utf8_codepoint_width(u32 codepoint); /* terminal column width: 0, 1, or 2 */
+/* decode codepoint at s.data[0] */
+AETHER_API Utf8Decode utf8_decode(str8_view s);
+
+/* terminal column width: 0, 1, or 2 */
+AETHER_API u8         utf8_codepoint_width(u32 codepoint);
+
+/* total terminal column width of s
+ *  - codepoints joined by a U+200D (zero-width-joiner, ZWJ) collapse onto the preceding glyph
+ *  - emoji skin-tone modifiers (U+1F3FB - U+1F3FF) do the same
+ *  - does not split on new-lines */
+AETHER_API u32        utf8_width(str8_view s);
 
 // --- paths ---
 // todo(chris): do this
@@ -2466,6 +2483,33 @@ AETHER_API u8 utf8_codepoint_width(u32 codepoint)
     if (utf8_codepoint_in_ranges_(codepoint, utf8_zero_width_ranges_, ARRAY_COUNT(utf8_zero_width_ranges_))) return 0;
     if (utf8_codepoint_in_ranges_(codepoint, utf8_wide_ranges_, ARRAY_COUNT(utf8_wide_ranges_))) return 2;
     return 1;
+}
+
+AETHER_API u32 utf8_width(str8_view s)
+{
+    u32 width  = 0;
+    u64 offset = 0;
+
+    /* detected zero-width-joiner after previous codepoint */
+    b8  after_zwj = false;
+
+    while (offset < s.size)
+    {
+        str8_view  rest = str8_skip(s, offset);
+        Utf8Decode d    = utf8_decode(rest);
+
+        u32 cp  = d.codepoint;
+        u8  len = d.len ? d.len : 1;
+
+        b8 is_modifier = d.len && cp >= 0x1F3FB && cp <= 0x1F3FF; /* skin-tone modifier */
+        if      (!d.len)                   { width += 1; }        /* invalid byte: count as 1 col */
+        else if (after_zwj || is_modifier) { }                    /* joined onto previous glyph */
+        else                               { width += utf8_codepoint_width(cp); }
+
+        after_zwj = d.len && cp == 0x200D;
+        offset   += len;
+    }
+    return width;
 }
 
 /* ------------------------------------------------------------------------- */
