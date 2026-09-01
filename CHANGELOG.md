@@ -3,7 +3,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.18] - 2026-09-01
 
 ### Changed
 - **Breaking:** `str8` no longer aliases `bytes`. It's now its own struct `{ const u8* data; u64 size; }` -- immutable, matching the fact that nothing in the API mutates a `str8`'s bytes in place; every construction function (`str8_push_copy`, `str8_concat`, `str8_join`, `str8_to_upper`/`str8_to_lower`, `str8_replace`, etc.) now stages writes through a local non-const `u8*` buffer and only assigns into the result's `const`-typed `.data` at the end. `bytes` is unchanged (`u8* data`, mutable) -- still the type for owned/writable buffers (`file_read`, `ring_buffer_reserve`).
