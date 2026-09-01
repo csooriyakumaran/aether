@@ -4,13 +4,11 @@
 
 int main()
 {
-    bytes      b   = {0};
-    bytes_view bv  = view_from_bytes(b);
-    str8       s   = {0};
-    str8_view  sv  = view_from_str8(s);
-    str8_view  lit = STR("probe");   /* str8_view{...} braced temporary -> C++11 */
-    u64        a   = (u64)ARENA_ALIGN(double);  /* alignof(double) */
+    bytes b   = {0};
+    str8  s   = {0};
+    str8  lit = STR("probe");   /* str8{...} braced temporary -> C++11 */
+    u64   a   = (u64)ARENA_ALIGN(double);  /* alignof(double) */
 
-    (void)bv; (void)sv; (void)lit; (void)a;
+    (void)b; (void)s; (void)lit; (void)a;
     return 0;
 }

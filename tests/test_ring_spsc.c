@@ -177,7 +177,7 @@ static int spsc_consumer(void* user)
 
         if (xorshift64(&chunk_rng) & 1)
         {
-            bytes_view v = ring_buffer_peek(ctx->rb, want);
+            view v = ring_buffer_peek(ctx->rb, want);
             if (!v.size) { thread_yield(); continue; }
             got  = v.data;
             held = v.size;

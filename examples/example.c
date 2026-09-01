@@ -172,7 +172,7 @@ int main(void)
 
     // - STRINGS
     printf("--- STRINGS ------------------------\n");
-    str8_view string_literal = STR("Hello, World");
+    str8 string_literal = STR("Hello, World");
     str8 mutable = {
         .data = (u8*)"abcdef",
         .size = 6

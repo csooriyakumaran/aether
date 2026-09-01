@@ -122,7 +122,7 @@ static void test_seam(void)
     ASSERT(ring_buffer_write(&rb, payload, 32)); /* spans [size-8 .. size+24) */
     ASSERT(rb.base[0] == payload[k]);            /* tail visible at base[0] via mirror */
 
-    bytes_view v = ring_buffer_peek(&rb, 32);
+    view v = ring_buffer_peek(&rb, 32);
     ASSERT(v.size == 32);
     ASSERT(memcmp(v.data, payload, 32) == 0);    /* one contiguous span across the seam */
 
@@ -143,15 +143,15 @@ static void test_peek_no_consume(void)
     ASSERT(ring_buffer_write(&rb, src, 64));
 
     u64 read_before = rb.read;
-    bytes_view a = ring_buffer_peek(&rb, 64);
-    bytes_view b = ring_buffer_peek(&rb, 64);
+    view a = ring_buffer_peek(&rb, 64);
+    view b = ring_buffer_peek(&rb, 64);
     ASSERT(a.data == b.data && a.size == b.size); /* idempotent */
     ASSERT(rb.read == read_before);               /* did not consume */
     ASSERT(memcmp(a.data, src, 64) == 0);
 
     u8 out[32];
     ASSERT(ring_buffer_read(&rb, out, 32));        /* now consume half */
-    bytes_view c = ring_buffer_peek(&rb, 32);
+    view c = ring_buffer_peek(&rb, 32);
     ASSERT(c.data != a.data);                      /* peek window moved forward */
     ASSERT(memcmp(c.data, src + 32, 32) == 0);
 
@@ -171,7 +171,7 @@ static void test_guards(void)
     ASSERT(rb.read == 0);
 
     /* peek beyond what is available returns a zeroed view */
-    bytes_view e = ring_buffer_peek(&rb, 1);
+    view e = ring_buffer_peek(&rb, 1);
     ASSERT(e.data == NULL && e.size == 0);
 
     /* a request larger than the whole capacity is rejected up front (the size
@@ -205,14 +205,14 @@ static void test_available_advance(void)
     ASSERT(ring_buffer_available(&rb) == 128);       /* tracks bytes written */
 
     /* zero-copy consume: peek a contiguous view, use it in place, then advance */
-    bytes_view v = ring_buffer_peek(&rb, 50);
+    view v = ring_buffer_peek(&rb, 50);
     ASSERT(v.size == 50);
     ASSERT(memcmp(v.data, src, 50) == 0);
     ASSERT(ring_buffer_advance_read(&rb, 50));        /* release exactly what was used */
     ASSERT(rb.read == 50);
     ASSERT(ring_buffer_available(&rb) == 78);         /* 128 - 50 */
 
-    bytes_view w = ring_buffer_peek(&rb, 78);
+    view w = ring_buffer_peek(&rb, 78);
     ASSERT(w.size == 78);
     ASSERT(memcmp(w.data, src + 50, 78) == 0);        /* window moved past the advance */
 
@@ -611,7 +611,7 @@ THREAD_FN(spsc_consumer)
 
         if (xorshift64(&chunk_rng) & 1)
         {
-            bytes_view v = ring_buffer_peek(ctx->rb, want);
+            view v = ring_buffer_peek(ctx->rb, want);
             if (!v.size) { test_thread_yield(); continue; }
             got  = v.data;
             held = v.size;

@@ -31,9 +31,9 @@ target_link_libraries(test_strings
         aether::aether
 )
 
-set(STRING_TEST_CASES eq cmp slice trim str_macro views c_str split
+set(STRING_TEST_CASES eq cmp slice trim str_macro c_str split
     skip_drop trim_lr eq_nocase prefix_suffix find cut concat join
-    case_convert replace parse view_sources)
+    case_convert replace parse from_c_str)
 
 foreach(case ${STRING_TEST_CASES})
     add_test(NAME str8_${case} COMMAND test_strings ${case})

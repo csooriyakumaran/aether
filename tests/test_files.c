@@ -46,9 +46,9 @@ static void test_write_read_roundtrip(void)
     SECTION("file_write + file_read: bytes out == bytes in");
 
     const char* path = "aether_test_roundtrip.tmp";
-    str8_view payload = STR("hello, file\nsecond line\0embedded nul survives");
+    str8 payload = STR("hello, file\nsecond line\0embedded nul survives");
 
-    u64 written = file_write(path, (bytes_view){payload.data, payload.size});
+    u64 written = file_write(path, payload.data, payload.size);
     ASSERT(written == payload.size);
 
     Arena* arena = arena_alloc(KB(4));
@@ -65,11 +65,11 @@ static void test_write_truncates(void)
     SECTION("file_write: existing file is replaced, not appended");
 
     const char* path = "aether_test_truncate.tmp";
-    str8_view big   = STR("a much longer first payload");
-    str8_view small = STR("short");
+    str8 big   = STR("a much longer first payload");
+    str8 small = STR("short");
 
-    ASSERT(file_write(path, (bytes_view){big.data, big.size}) == big.size);
-    ASSERT(file_write(path, (bytes_view){small.data, small.size}) == small.size);
+    ASSERT(file_write(path, big.data, big.size) == big.size);
+    ASSERT(file_write(path, small.data, small.size) == small.size);
 
     Arena* arena = arena_alloc(KB(4));
     bytes back = file_read(arena, path);
@@ -84,8 +84,8 @@ static void test_write_failure(void)
 {
     SECTION("file_write: unwritable path reports 0 bytes");
 
-    str8_view payload = STR("data");
-    u64 written = file_write("aether_no_such_dir/x.tmp", (bytes_view){payload.data, payload.size});
+    str8 payload = STR("data");
+    u64 written = file_write("aether_no_such_dir/x.tmp", payload.data, payload.size);
     ASSERT(written == 0);
 }
 
@@ -109,10 +109,10 @@ static void test_map_roundtrip(void)
     SECTION("file_map / file_unmap: read-only view of file contents");
 
     const char* path = "aether_test_map.tmp";
-    str8_view payload = STR("mapped contents");
-    ASSERT(file_write(path, (bytes_view){payload.data, payload.size}) == payload.size);
+    str8 payload = STR("mapped contents");
+    ASSERT(file_write(path, payload.data, payload.size) == payload.size);
 
-    bytes_view v = file_map(path);
+    view v = file_map(path);
     ASSERT(v.size == payload.size);
     ASSERT(v.data && memcmp(v.data, payload.data, payload.size) == 0);
     file_unmap(v);
@@ -124,17 +124,16 @@ static void test_map_missing(void)
 {
     SECTION("file_map: missing or empty file yields empty view");
 
-    bytes_view missing = file_map("aether_no_such_file.tmp");
+    view missing = file_map("aether_no_such_file.tmp");
     ASSERT(missing.data == NULL);
     ASSERT(missing.size == 0);
 
     /* empty file: file_write of zero bytes creates it (and returns 0 --
      * indistinguishable from failure by design, see file_write contract) */
     const char* path = "aether_test_empty.tmp";
-    bytes_view none = {0};
-    file_write(path, none);
+    file_write(path, NULL, 0);
 
-    bytes_view empty = file_map(path);
+    view empty = file_map(path);
     ASSERT(empty.data == NULL);
     ASSERT(empty.size == 0);
 

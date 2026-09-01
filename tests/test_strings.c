@@ -47,7 +47,7 @@ static void test_eq(void)
     ASSERT(!str8_eq(STR("hello"), STR("hell")));  /* shared prefix, different length */
     ASSERT(str8_eq(STR(""), STR("")));
 
-    str8_view s = STR("same");
+    str8 s = STR("same");
     ASSERT(str8_eq(s, s)); /* pointer-identity shortcut */
 }
 
@@ -66,17 +66,17 @@ static void test_slice(void)
 {
     SECTION("str8_slice: half-open [start, end) substrings");
 
-    str8_view s = STR("hello world");
+    str8 s = STR("hello world");
 
-    str8_view whole = str8_slice(s, 0, s.size);
+    str8 whole = str8_slice(s, 0, s.size);
     ASSERT(whole.size == s.size);
     ASSERT(memcmp(whole.data, "hello world", 11) == 0);
 
-    str8_view word = str8_slice(s, 6, 11);
+    str8 word = str8_slice(s, 6, 11);
     ASSERT(word.size == 5);
     ASSERT(memcmp(word.data, "world", 5) == 0);
 
-    str8_view empty = str8_slice(s, 3, 3);
+    str8 empty = str8_slice(s, 3, 3);
     ASSERT(empty.size == 0);
 }
 
@@ -84,21 +84,21 @@ static void test_trim(void)
 {
     SECTION("str8_trim: strips leading/trailing whitespace only");
 
-    str8_view a = str8_trim(STR("  hello  "));
+    str8 a = str8_trim(STR("  hello  "));
     ASSERT(a.size == 5);
     ASSERT(memcmp(a.data, "hello", 5) == 0);
 
-    str8_view b = str8_trim(STR("no_trim"));
+    str8 b = str8_trim(STR("no_trim"));
     ASSERT(b.size == 7);
     ASSERT(memcmp(b.data, "no_trim", 7) == 0);
 
-    str8_view c = str8_trim(STR("   "));
+    str8 c = str8_trim(STR("   "));
     ASSERT(c.size == 0);
 
-    str8_view d = str8_trim(STR(""));
+    str8 d = str8_trim(STR(""));
     ASSERT(d.size == 0);
 
-    str8_view e = str8_trim(STR("a b\tc\n")); /* embedded whitespace must survive */
+    str8 e = str8_trim(STR("a b\tc\n")); /* embedded whitespace must survive */
     ASSERT(e.size == 5);
     ASSERT(memcmp(e.data, "a b\tc", 5) == 0);
 }
@@ -107,11 +107,11 @@ static void test_str_macro(void)
 {
     SECTION("STR / STR8_ARG / STR8_FMT: literal-to-view and printf round trip");
 
-    str8_view s = STR("hello");
+    str8 s = STR("hello");
     ASSERT(s.size == 5);
     ASSERT(memcmp(s.data, "hello", 5) == 0);
 
-    str8_view empty = STR("");
+    str8 empty = STR("");
     ASSERT(empty.size == 0);
 
     char buf[32];
@@ -120,28 +120,9 @@ static void test_str_macro(void)
     ASSERT(strcmp(buf, "hello") == 0);
 }
 
-static void test_views(void)
-{
-    SECTION("view_from_str8 / view_from_bytes: borrow without copying");
-
-    Arena* arena = arena_alloc(KB(4));
-
-    str8 owned = str8_push_copy(arena, STR("borrowed"));
-    str8_view view = view_from_str8(owned);
-    ASSERT(view.data == owned.data);
-    ASSERT(view.size == owned.size);
-
-    bytes b = { .data = owned.data, .size = owned.size };
-    bytes_view bv = view_from_bytes(b);
-    ASSERT(bv.data == b.data);
-    ASSERT(bv.size == b.size);
-
-    arena_release(arena);
-}
-
 static void test_c_str(void)
 {
-    SECTION("c_str: str8_view -> null-terminated, arena-allocated C string");
+    SECTION("c_str: str8 -> null-terminated, arena-allocated C string");
 
     Arena* arena = arena_alloc(KB(4));
 
@@ -149,13 +130,13 @@ static void test_c_str(void)
     ASSERT(strcmp(h, "hello") == 0);
 
     str8 copy = str8_push_copy(arena, STR("world"));
-    char* w = c_str(arena, view_from_str8(copy));
+    char* w = c_str(arena, copy);
     ASSERT(strcmp(w, "world") == 0);
 
     char* e = c_str(arena, STR(""));
     ASSERT(strcmp(e, "") == 0);
 
-    char* z = c_str(arena, (str8_view){0}); /* NULL data, zero size */
+    char* z = c_str(arena, (str8){0}); /* NULL data, zero size */
     ASSERT(strcmp(z, "") == 0);
 
     arena_release(arena);
@@ -222,7 +203,7 @@ static void test_split_trim_and_foreach(void)
        `r >= rows.count` / `c >= fields.count` are regression guards for the
        node = node->next advance step: if that ever breaks, the loop fails
        loudly on a wrong/repeated value instead of hanging the suite. */
-    str8_view csv = STR("name, age,city\r\n"
+    str8 csv = STR("name, age,city\r\n"
                          "Ada, 32, London\r\n"
                          "Grace,  49,New York\r\n");
 
@@ -248,7 +229,7 @@ static void test_split_trim_and_foreach(void)
         Str8ListForEach(fields, field)
         {
             if (c >= fields.count) break;
-            ASSERT(str8_eq(field->v, view_from_c_str(expected[r][c])));
+            ASSERT(str8_eq(field->v, str8_from_c_str(expected[r][c])));
             c++;
         }
         ASSERT(c == 3);
@@ -263,7 +244,7 @@ static void test_skip_drop(void)
 {
     SECTION("str8_skip / str8_drop: views without the first/last n bytes");
 
-    str8_view s = STR("hello");
+    str8 s = STR("hello");
 
     ASSERT(str8_eq(str8_skip(s, 0), s));
     ASSERT(str8_eq(str8_skip(s, 2), STR("llo")));
@@ -344,7 +325,7 @@ static void test_cut(void)
 {
     SECTION("str8_cut: split at first separator into before/after");
 
-    str8_view before, after;
+    str8 before, after;
 
     ASSERT(str8_cut(STR("key=value"), STR("="), &before, &after));
     ASSERT(str8_eq(before, STR("key")));
@@ -369,7 +350,7 @@ static void test_cut_ex(void)
 {
     SECTION("str8_cut_ex: str8_cut plus Str8CutFlags_Trim / Str8CutFlags_Last");
 
-    str8_view before, after;
+    str8 before, after;
 
     /* Str8CutFlags_None behaves exactly like str8_cut (which is a thin wrapper over this) */
     ASSERT(str8_cut_ex(STR("key=value"), STR("="), &before, &after, Str8CutFlags_None));
@@ -419,11 +400,11 @@ static void test_concat(void)
     Arena* arena = arena_alloc(KB(4));
 
     str8 ab = str8_concat(arena, STR("foo"), STR("bar"));
-    ASSERT(str8_eq(view_from_str8(ab), STR("foobar")));
+    ASSERT(str8_eq(ab, STR("foobar")));
     ASSERT(ab.data[ab.size] == '\0');
 
     str8 ea = str8_concat(arena, STR(""), STR("x"));
-    ASSERT(str8_eq(view_from_str8(ea), STR("x")));
+    ASSERT(str8_eq(ea, STR("x")));
 
     str8 copy = str8_push_copy(arena, STR("hi"));
     ASSERT(copy.data[copy.size] == '\0'); /* push_copy follows the nul-termination convention */
@@ -445,12 +426,12 @@ static void test_join(void)
     ASSERT(list.total_len == 4); /* "a" + "42" + "c" */
 
     str8 joined = str8_join(arena, &list, STR(", "));
-    ASSERT(str8_eq(view_from_str8(joined), STR("a, 42, c")));
+    ASSERT(str8_eq(joined, STR("a, 42, c")));
     ASSERT(joined.data[joined.size] == '\0');
 
     Str8List single = {0};
     str8_list_push(arena, &single, STR("only"));
-    ASSERT(str8_eq(view_from_str8(str8_join(arena, &single, STR("|"))), STR("only")));
+    ASSERT(str8_eq(str8_join(arena, &single, STR("|")), STR("only")));
 
     Str8List empty = {0};
     str8 none = str8_join(arena, &empty, STR("|"));
@@ -474,11 +455,11 @@ static void test_case_convert(void)
     Arena* arena = arena_alloc(KB(4));
 
     str8 up = str8_to_upper(arena, STR("Hello, World! 123"));
-    ASSERT(str8_eq(view_from_str8(up), STR("HELLO, WORLD! 123")));
+    ASSERT(str8_eq(up, STR("HELLO, WORLD! 123")));
     ASSERT(up.data[up.size] == '\0');
 
     str8 lo = str8_to_lower(arena, STR("Hello, World! 123"));
-    ASSERT(str8_eq(view_from_str8(lo), STR("hello, world! 123")));
+    ASSERT(str8_eq(lo, STR("hello, world! 123")));
     ASSERT(lo.data[lo.size] == '\0');
 
     ASSERT(str8_to_upper(arena, STR("")).size == 0);
@@ -494,23 +475,23 @@ static void test_replace(void)
     Arena* arena = arena_alloc(KB(4));
 
     str8 grow = str8_replace(arena, STR("aXbXc"), STR("X"), STR("YY"));
-    ASSERT(str8_eq(view_from_str8(grow), STR("aYYbYYc")));
+    ASSERT(str8_eq(grow, STR("aYYbYYc")));
     ASSERT(grow.data[grow.size] == '\0');
 
     str8 shrink = str8_replace(arena, STR("aXXbXXc"), STR("XX"), STR("_")); /* target shorter than old */
-    ASSERT(str8_eq(view_from_str8(shrink), STR("a_b_c")));
+    ASSERT(str8_eq(shrink, STR("a_b_c")));
 
     str8 del = str8_replace(arena, STR("aXbXc"), STR("X"), STR("")); /* empty target deletes */
-    ASSERT(str8_eq(view_from_str8(del), STR("abc")));
+    ASSERT(str8_eq(del, STR("abc")));
 
     str8 miss = str8_replace(arena, STR("abc"), STR("X"), STR("Y")); /* old not present: plain copy */
-    ASSERT(str8_eq(view_from_str8(miss), STR("abc")));
+    ASSERT(str8_eq(miss, STR("abc")));
 
     str8 noop = str8_replace(arena, STR("abc"), STR(""), STR("Y")); /* empty old: plain copy */
-    ASSERT(str8_eq(view_from_str8(noop), STR("abc")));
+    ASSERT(str8_eq(noop, STR("abc")));
 
     str8 nonoverlap = str8_replace(arena, STR("aaa"), STR("aa"), STR("b"));
-    ASSERT(str8_eq(view_from_str8(nonoverlap), STR("ba")));
+    ASSERT(str8_eq(nonoverlap, STR("ba")));
 
     arena_release(arena);
 }
@@ -633,21 +614,16 @@ static void test_parse_int_wrappers(void)
     ASSERT(!str8_to_i32(STR("2147483648"), &i32v));
 }
 
-static void test_view_sources(void)
+static void test_from_c_str(void)
 {
-    SECTION("view_from_c_str / view_from_raw");
+    SECTION("str8_from_c_str: c-string to str8, no copy");
 
-    str8_view s = view_from_c_str("abc");
+    str8 s = str8_from_c_str("abc");
     ASSERT(s.size == 3);
     ASSERT(memcmp(s.data, "abc", 3) == 0);
 
-    ASSERT(view_from_c_str(NULL).size == 0);
-    ASSERT(view_from_c_str("").size == 0);
-
-    const char raw[] = {'x', 'y', 'z'};
-    str8_view r = view_from_raw(raw, 3);
-    ASSERT(r.size == 3);
-    ASSERT(r.data == (const u8*)raw); /* borrow, not copy */
+    ASSERT(str8_from_c_str(NULL).size == 0);
+    ASSERT(str8_from_c_str("").size == 0);
 }
 
 static void test_utf8_decode(void)
@@ -659,7 +635,7 @@ static void test_utf8_decode(void)
     d = utf8_decode(STR("A"));
     ASSERT(d.len == 1 && d.codepoint == 0x41);
 
-    d = utf8_decode((str8_view){0});
+    d = utf8_decode((str8){0});
     ASSERT(d.len == 0);
 
     d = utf8_decode(STR("\xC2\xA9"));           /* U+00A9 (c), 2-byte */
@@ -717,7 +693,6 @@ static TestCase g_cases[] = {
     {"slice",     test_slice},
     {"trim",      test_trim},
     {"str_macro", test_str_macro},
-    {"views",     test_views},
     {"c_str",     test_c_str},
     {"split",     test_split},
     {"split_trim_foreach", test_split_trim_and_foreach},
@@ -736,7 +711,7 @@ static TestCase g_cases[] = {
     {"parse_bases",        test_parse_bases},
     {"parse_int_range",    test_parse_int_range},
     {"parse_int_wrappers", test_parse_int_wrappers},
-    {"view_sources",  test_view_sources},
+    {"from_c_str",    test_from_c_str},
     {"utf8_decode",   test_utf8_decode},
     {"utf8_width",    test_utf8_codepoint_width},
 };

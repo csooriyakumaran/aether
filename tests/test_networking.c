@@ -144,7 +144,7 @@ static void test_addr_to_cstr_and_str8(void)
 
     Arena* arena = arena_alloc(KB(4));
     str8 s = net_addr_to_str8(arena, addr);
-    ASSERT(str8_eq(view_from_str8(s), STR("192.168.0.1:8080")));
+    ASSERT(str8_eq(s, STR("192.168.0.1:8080")));
     arena_release(arena);
 }
 
@@ -173,7 +173,7 @@ static void test_tcp_roundtrip(void)
     u64 msg_len = (u64)strlen(msg);
 
     u64 sent = 0;
-    NetResult r = tcp_send(client, view_from_raw(msg, msg_len), &sent);
+    NetResult r = tcp_send(client, msg, msg_len, &sent);
     ASSERT(r == NetResult_OK);
     ASSERT(sent == msg_len);
 
@@ -210,7 +210,7 @@ static void test_udp_roundtrip(void)
     const char* msg = "hello udp";
     u64 msg_len = (u64)strlen(msg);
 
-    NetResult r = udp_send_to(sock_a, addr_b, view_from_raw(msg, msg_len));
+    NetResult r = udp_send_to(sock_a, addr_b, msg, msg_len);
     ASSERT(r == NetResult_OK);
 
     char buf[64] = {0};
