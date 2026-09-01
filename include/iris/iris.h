@@ -248,8 +248,8 @@ typedef struct NetAddr { u8 ip[4]; u16 port; } NetAddr;      /* ip wire-order, p
 IRIS_API NetAddr net_addr(u8 a, u8 b, u8 c, u8 d, u16 port); 
 IRIS_API NetAddr net_addr_any(u16 port);                    /* 0.0.0.0 - all interfaces */
 IRIS_API NetAddr net_addr_loopback(u16 port);               /* 127.0.0.1                */
-IRIS_API b8      net_addr_parse(str8_view ip, u16 port, NetAddr* out); /* numeric only, no DNS */
-IRIS_API b8      net_addr_parse_hostport(str8_view s, u16 default_port, NetAddr* out);
+IRIS_API b8      net_addr_parse(str8 ip, u16 port, NetAddr* out); /* numeric only, no DNS */
+IRIS_API b8      net_addr_parse_hostport(str8 s, u16 default_port, NetAddr* out);
 IRIS_API u32     net_addr_to_cstr(NetAddr addr, char *buf, u64 buf_size);
 IRIS_API str8    net_addr_to_str8(Arena* arena, NetAddr addr);
 
@@ -271,13 +271,13 @@ enum NetResult_
 IRIS_API Socket    tcp_listen(NetAddr addr, u32 backlog);              /* {0} on failure */
 IRIS_API Socket    tcp_accept(Socket listener, NetAddr* out_peer);     /* {0} if none pending (or error) */
 IRIS_API Socket    tcp_connect(NetAddr addr);                          /* {0} on failure */
-IRIS_API NetResult tcp_send(Socket s, bytes_view data, u64* out_sent); /* partial sends are OK */
+IRIS_API NetResult tcp_send(Socket s, const void* src, u64 len, u64* out_sent); /* partial sends are OK */
 IRIS_API NetResult tcp_recv(Socket s, void* buf, u64 cap, u64* out_recv);
 
 /* UDP. Datagrams send whole or not at all; oversized datagrams are 
  * NetResult_Error. udp_open with port 0 = ephemeral send-only socket */
 IRIS_API Socket    udp_open(NetAddr bind_addr);
-IRIS_API NetResult udp_send_to(Socket s, NetAddr to, bytes_view datagram);
+IRIS_API NetResult udp_send_to(Socket s, NetAddr to, const void* src, u64 len);
 IRIS_API NetResult udp_recv_from(Socket s, void* buf, u64 cap, u64* out_recv, NetAddr* out_from);
 
 #if IRIS_LANG_CPP
@@ -489,7 +489,7 @@ internal u64 os_tcp_connect(NetAddr addr)
 #endif
 }
 
-internal NetResult os_tcp_send(u64 h, const u8* data, u64 len, u64* out_sent)
+internal NetResult os_tcp_send(u64 h, const void* data, u64 len, u64* out_sent)
 {
 #if IRIS_OS_WINDOWS
     if (out_sent) *out_sent = 0;
@@ -557,7 +557,7 @@ internal u64 os_udp_open(NetAddr bind_addr)
 #endif
 }
 
-internal NetResult os_udp_send_to(u64 h, NetAddr to, const u8* data, u64 len)
+internal NetResult os_udp_send_to(u64 h, NetAddr to, const void* data, u64 len)
 {
 #if IRIS_OS_WINDOWS
     if (!h) return NetResult_Error;
@@ -631,7 +631,7 @@ IRIS_API NetAddr net_addr_loopback(u16 port) { return net_addr(127, 0, 0, 1, por
 /* str8_to_u64 also accepts 0x/0o/0b literals (aether's general integer syntax) --
  * that's not the surface net_addr's "numeric only" contract means to expose, so
  * octets/ports are pre-validated as plain decimal digits before conversion. */
-internal b8 str8_is_decimal_(str8_view s)
+internal b8 str8_is_decimal_(str8 s)
 {
     if (s.size == 0) return false;
 
@@ -644,19 +644,19 @@ internal b8 str8_is_decimal_(str8_view s)
     return true;
 }
 
-IRIS_API b8 net_addr_parse(str8_view ip, u16 port, NetAddr* out)
+IRIS_API b8 net_addr_parse(str8 ip, u16 port, NetAddr* out)
 {
     if (!out) return false;
 
     u8 octets[4];
-    str8_view rest = ip;
+    str8 rest = ip;
 
     for (int i = 0; i < 4; i++)
     {
-        str8_view field;
+        str8 field;
         if (i < 3)
         {
-            str8_view after;
+            str8 after;
             if (!str8_cut(rest, STR("."), &field, &after)) return false;
             rest = after;
         }
@@ -676,14 +676,14 @@ IRIS_API b8 net_addr_parse(str8_view ip, u16 port, NetAddr* out)
     return true;
 }
 
-IRIS_API b8 net_addr_parse_hostport(str8_view s, u16 default_port, NetAddr* out)
+IRIS_API b8 net_addr_parse_hostport(str8 s, u16 default_port, NetAddr* out)
 {
     if (!out) return false;
 
-    str8_view host = s;
+    str8 host = s;
     u16       port = default_port;
 
-    str8_view before, after;
+    str8 before, after;
     if (str8_cut(s, STR(":"), &before, &after))
     {
         u64 v;
@@ -755,9 +755,9 @@ IRIS_API Socket tcp_connect(NetAddr addr)
     return s;
 }
 
-IRIS_API NetResult tcp_send(Socket s, bytes_view data, u64* out_sent)
+IRIS_API NetResult tcp_send(Socket s, const void* src, u64 len, u64* out_sent)
 {
-    return os_tcp_send(s.handle, data.data, data.size, out_sent);
+    return os_tcp_send(s.handle, src, len, out_sent);
 }
 
 IRIS_API NetResult tcp_recv(Socket s, void* buf, u64 cap, u64* out_recv)
@@ -776,9 +776,9 @@ IRIS_API Socket udp_open(NetAddr bind_addr)
     return s;
 }
 
-IRIS_API NetResult udp_send_to(Socket s, NetAddr to, bytes_view datagram)
+IRIS_API NetResult udp_send_to(Socket s, NetAddr to, const void* src, u64 len)
 {
-    return os_udp_send_to(s.handle, to, datagram.data, datagram.size);
+    return os_udp_send_to(s.handle, to, src, len);
 }
 
 IRIS_API NetResult udp_recv_from(Socket s, void* buf, u64 cap, u64* out_recv, NetAddr* out_from)

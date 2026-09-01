@@ -396,11 +396,8 @@ typedef double             f64; AETHER_STATIC_ASSERT(sizeof(f64) == 8, "f64 != 8
 typedef u8                  b8; AETHER_STATIC_ASSERT(sizeof(b8)  == 1, "b8  != 1 byte");
 typedef u32                b32; AETHER_STATIC_ASSERT(sizeof(b32) == 4, "b32 != 4 bytes");
 
-typedef struct bytes      {       u8* data; u64 size; } bytes;
-typedef struct bytes_view { const u8* data; u64 size; } bytes_view;
-
-static  inline bytes_view view_from_bytes(bytes b) { bytes_view v = {b.data, b.size}; return v; }
-static  inline bytes_view view_from_raw(const void* data, u64 size) { bytes_view v = {(const u8*)data, size}; return v; }
+typedef struct bytes {       u8* data; u64 size; } bytes;
+typedef struct view  { const u8* data; u64 size; } view;
 
 /*-------- A T O M I C S  ----------------------------------------------------*/
 
@@ -548,7 +545,7 @@ AETHER_API void      arena_end_temp(ArenaTemp temp);
 
 /* - Ring buffers are safe for exactly one producer thread and one consumer thread
  *   more of either requires external synchronization
- * - peeked views become invalid after the matching advance_read
+ * - peeked `views` become invalid after the matching advance_read
  * - only one reserve() may be oustanding at a time; commit() or
  *   cancel_reservation() before next reserve() */
 
@@ -565,7 +562,7 @@ typedef struct AETHER_ALIGN(AETHER_CACHE_LINE_SIZE) RingBuffer
 AETHER_API RingBuffer ring_buffer_alloc(u64 size);
 AETHER_API void       ring_buffer_release(RingBuffer* rb);
 AETHER_API u64        ring_buffer_available(RingBuffer* rb);
-AETHER_API bytes_view ring_buffer_peek(RingBuffer* rb, u64 len);
+AETHER_API view       ring_buffer_peek(RingBuffer* rb, u64 len);
 AETHER_API b8         ring_buffer_advance_read(RingBuffer* rb, u64 len);
 AETHER_API b8         ring_buffer_read(RingBuffer* rb, void* dst, u64 len);
 AETHER_API bytes      ring_buffer_reserve(RingBuffer* rb, u64 len);
@@ -578,19 +575,14 @@ AETHER_API b8         ring_buffer_write(RingBuffer* rb, const void* src, u64 len
 /* note(chris):
  *    - str8's pushed onto an arena will be nul-terminated by convention
  *    - nul-termination is not included in size
- *    - str8_view has no guarantee of nul-termination
+ *    - non-owning str8 views (e.g, from a slice op) have no guarantee
+ *    of nul-termination
  */
+typedef struct str8 { const u8* data; u64 size; } str8;
+static inline  str8 str8_from_view(view v){ str8 s = {v.data, v.size}; return s; }
 
-typedef bytes      str8;
-typedef bytes_view str8_view;
-
-typedef struct str16      {       u16* data; u64  size; } str16;
-typedef struct str16_view { const u16* data; u64  size; } str16_view;
-
-static  inline str8_view  view_from_str8(str8 s)   { str8_view   v = {s.data, s.size}; return v; }
-static  inline str16_view view_from_str16(str16 s) { str16_view  v = {s.data, s.size}; return v; }
-
-#define STR(s) (AETHER_LITERAL(str8_view){ (const u8*)(s), sizeof(s) - 1 }) /*STRING LITERALS ONLY: decays silently on pointers */
+/*STRING LITERALS ONLY: decays silently on pointers */
+#define STR(s) (AETHER_LITERAL(str8){ (const u8*)(s), sizeof(s) - 1 })
 
 #define STR8_ARG(s) ((int)((s).size)), ((const char*)((s).data))
 #define STR8_FMT "%.*s"
@@ -602,7 +594,7 @@ typedef struct Str8Node Str8Node;
 struct Str8Node
 {
     Str8Node* next;
-    str8_view  v;
+    str8  v;
 };
 
 typedef struct Str8List
@@ -615,7 +607,7 @@ typedef struct Str8List
 
 typedef struct Str8Array
 {
-    str8_view* items;
+    str8* items;
     u64        count;
 } Str8Array;
 
@@ -636,64 +628,64 @@ enum Str8CutFlags_
 };
 
 // --- construction --- 
-AETHER_API char*     c_str(Arena* arena, str8_view s);
+AETHER_API char*     c_str(Arena* arena, str8 s);
 AETHER_API char*     c_str_push_copy(Arena* arena, const char* src);
 AETHER_API char*     c_str_push_fmt(Arena* arena, const char* fmt, ...);
 
-AETHER_API str8      str8_push_copy(Arena* arena, str8_view src);
+AETHER_API str8      str8_push_copy(Arena* arena, str8 src);
 AETHER_API str8      str8_push_c_str(Arena* arena, const char* src);
 AETHER_API str8      str8_push_fmt(Arena* arena, const char* fmt, ...);
-AETHER_API str8      str8_concat(Arena* arena, str8_view a, str8_view b);
+AETHER_API str8      str8_concat(Arena* arena, str8 a, str8 b);
 
 // --- view / slices --- (no allocation)
-AETHER_API str8_view view_from_c_str(const char* s);
-AETHER_API str8_view str8_slice(str8_view s, u64 start, u64 end);  /* return substr from [start, end) */
-AETHER_API str8_view str8_skip(str8_view s, u64 n);                /* skip first n characters */
-AETHER_API str8_view str8_drop(str8_view s, u64 n);                /* drop last n characters */
-AETHER_API str8_view str8_trim(str8_view s);                       /* trim whitespace from both ends */
-AETHER_API str8_view str8_trim_left(str8_view s);                  /* trim whitespace from left */
-AETHER_API str8_view str8_trim_right(str8_view s);                 /* trim whitespace from right */
+AETHER_API str8      str8_from_c_str(const char* s);
+AETHER_API str8      str8_slice(str8 s, u64 start, u64 end);  /* return substr from [start, end) */
+AETHER_API str8      str8_skip(str8 s, u64 n);                /* skip first n characters */
+AETHER_API str8      str8_drop(str8 s, u64 n);                /* drop last n characters */
+AETHER_API str8      str8_trim(str8 s);                       /* trim whitespace from both ends */
+AETHER_API str8      str8_trim_left(str8 s);                  /* trim whitespace from left */
+AETHER_API str8      str8_trim_right(str8 s);                 /* trim whitespace from right */
 
 // --- queries ---       (no allocation)
-AETHER_API b8        str8_eq(str8_view a, str8_view b);
-AETHER_API b8        str8_eq_nocase(str8_view a, str8_view b);
-AETHER_API b8        str8_has_prefix(str8_view s, str8_view prefix);
-AETHER_API b8        str8_has_suffix(str8_view s, str8_view suffix);
-AETHER_API b8        str8_find(str8_view s, str8_view needle, u64* pos);
-AETHER_API b8        str8_find_last(str8_view s, str8_view needle, u64* pos);
-AETHER_API b8        str8_find_char(str8_view s, u8 c, u64* pos);
-AETHER_API i32       str8_cmp(str8_view a, str8_view b); /* memcmp-style ordering */
+AETHER_API b8        str8_eq(str8 a, str8 b);
+AETHER_API b8        str8_eq_nocase(str8 a, str8 b);
+AETHER_API b8        str8_has_prefix(str8 s, str8 prefix);
+AETHER_API b8        str8_has_suffix(str8 s, str8 suffix);
+AETHER_API b8        str8_find(str8 s, str8 needle, u64* pos);
+AETHER_API b8        str8_find_last(str8 s, str8 needle, u64* pos);
+AETHER_API b8        str8_find_char(str8 s, u8 c, u64* pos);
+AETHER_API i32       str8_cmp(str8 a, str8 b); /* memcmp-style ordering */
 
 // --- cut / split / list / join --- 
-AETHER_API b8        str8_cut_ex(str8_view s, str8_view sep, str8_view* before, str8_view* after, Str8CutFlags flags);
-AETHER_API b8        str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after);
-AETHER_API Str8List  str8_split(Arena* arena, str8_view s, str8_view sep, Str8SplitFlags flags);
-AETHER_API void      str8_list_push(Arena* arena, Str8List* list, str8_view v);
+AETHER_API b8        str8_cut_ex(str8 s, str8 sep, str8* before, str8* after, Str8CutFlags flags);
+AETHER_API b8        str8_cut(str8 s, str8 sep, str8* before, str8* after);
+AETHER_API Str8List  str8_split(Arena* arena, str8 s, str8 sep, Str8SplitFlags flags);
+AETHER_API void      str8_list_push(Arena* arena, Str8List* list, str8 v);
 AETHER_API void      str8_list_push_fmt(Arena* arena, Str8List* list, const char* fmt, ...);
-AETHER_API str8      str8_join(Arena* arena, Str8List* list, str8_view sep);
+AETHER_API str8      str8_join(Arena* arena, Str8List* list, str8 sep);
 AETHER_API Str8Array str8_list_to_array(Arena* arena, Str8List* list);
 
 // --- transforms ---     (allocation)
-AETHER_API str8      str8_to_upper(Arena* arena, str8_view s);
-AETHER_API str8      str8_to_lower(Arena* arena, str8_view s);
-AETHER_API str8      str8_replace(Arena* arena, str8_view s, str8_view old, str8_view target); /* split + join*/
+AETHER_API str8      str8_to_upper(Arena* arena, str8 s);
+AETHER_API str8      str8_to_lower(Arena* arena, str8 s);
+AETHER_API str8      str8_replace(Arena* arena, str8 s, str8 old, str8 target); /* split + join*/
 
 // --- parsing --- 
-AETHER_API b8        str8_to_int(str8_view s, i64 min, i64 max, i64* out);
+AETHER_API b8        str8_to_int(str8 s, i64 min, i64 max, i64* out);
 
-AETHER_API b8        str8_to_u8(str8_view s,  u8* out);
-AETHER_API b8        str8_to_u16(str8_view s, u16* out);
-AETHER_API b8        str8_to_u32(str8_view s, u32* out);
-AETHER_API b8        str8_to_u64(str8_view s, u64* out);
+AETHER_API b8        str8_to_u8(str8 s,  u8* out);
+AETHER_API b8        str8_to_u16(str8 s, u16* out);
+AETHER_API b8        str8_to_u32(str8 s, u32* out);
+AETHER_API b8        str8_to_u64(str8 s, u64* out);
 
-AETHER_API b8        str8_to_i8(str8_view s,  i8* out);
-AETHER_API b8        str8_to_i16(str8_view s, i16* out);
-AETHER_API b8        str8_to_i32(str8_view s, i32* out);
-AETHER_API b8        str8_to_i64(str8_view s, i64* out);
+AETHER_API b8        str8_to_i8(str8 s,  i8* out);
+AETHER_API b8        str8_to_i16(str8 s, i16* out);
+AETHER_API b8        str8_to_i32(str8 s, i32* out);
+AETHER_API b8        str8_to_i64(str8 s, i64* out);
 
-AETHER_API b8        str8_to_f64(str8_view s, f64* out); /* limits to 64 character */
+AETHER_API b8        str8_to_f64(str8 s, f64* out); /* limits to 64 character */
 
-// --- utf8 --- (str8/str8_view stay plain bytes; these are opt-in decode
+// --- utf8 --- (str8 stay plain bytes; these are opt-in decode
 // helpers for callers -- e.g. a terminal layer -- that need to walk
 // codepoint/column boundaries)
 
@@ -704,7 +696,7 @@ typedef struct Utf8Decode
 } Utf8Decode;
 
 /* decode codepoint at s.data[0] */
-AETHER_API Utf8Decode utf8_decode(str8_view s);
+AETHER_API Utf8Decode utf8_decode(str8 s);
 
 /* terminal column width: 0, 1, or 2 */
 AETHER_API u8         utf8_codepoint_width(u32 codepoint);
@@ -713,7 +705,7 @@ AETHER_API u8         utf8_codepoint_width(u32 codepoint);
  *  - codepoints joined by a U+200D (zero-width-joiner, ZWJ) collapse onto the preceding glyph
  *  - emoji skin-tone modifiers (U+1F3FB - U+1F3FF) do the same
  *  - does not split on new-lines */
-AETHER_API u32        utf8_width(str8_view s);
+AETHER_API u32        utf8_width(str8 s);
 
 // --- paths ---
 // todo(chris): do this
@@ -722,11 +714,11 @@ AETHER_API u32        utf8_width(str8_view s);
 /* ------- F I L E - I / O ------------------------------------------------- */
 
 AETHER_API bytes file_read(Arena* arena, const char* path);
-AETHER_API u64   file_write(const char* path, bytes_view data);
+AETHER_API u64   file_write(const char* path, const void* src, u64 len);
 
 // Read-only view into a memory mapped file
-AETHER_API bytes_view file_map(const char* path);
-AETHER_API void       file_unmap(bytes_view map);
+AETHER_API view  file_map(const char* path);
+AETHER_API void  file_unmap(view map);
 
 /* ------- T I M E R S ----------------------------------------------------- */
 AETHER_API u64 time_mark(void);
@@ -870,40 +862,6 @@ AETHER_API void console_signal_uninstall(void);
 extern "C"
 {
 #endif // AETHER_LANG_CPP
-
-// internal u32 os_get_last_error(void)
-// {
-// #if AETHER_OS_WINDOWS
-//     return (u32)GetLastError();
-// #else
-//     #error "AETHER: OS get last error not implemented on this platform"
-// #endif
-// }
-//
-// internal str8 os_error_string(Arena* arena, u32 code)
-// {
-// #if AETHER_OS_WINDOWS
-//     char buf[512];
-//     DWORD len = FormatMessageA(
-//         FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-//         0, (DWORD)code,
-//         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-//         buf, sizeof(buf), 0
-//     );
-//
-//     // strip trailing "\r\n"
-//     while (len > 0 && (buf[len-1] == '\r' || buf[len-1] == '\n'))
-//     {
-//         len -= 1;
-//     }
-//
-//     if (len == 0) return str8_push_fmt(arena, "unknown error (%u)", code );
-//
-//     return str8_push_copy(arena, view_from_raw(buf, len));
-// #else
-//     #error "AETHER: OS error string not implemented on this platform"
-// #endif
-// }
 
 internal u64 os_mem_pagesize(void)
 {
@@ -1649,9 +1607,9 @@ AETHER_API u64 ring_buffer_available(RingBuffer* rb)
     return write - read;
 }
 
-AETHER_API bytes_view ring_buffer_peek(RingBuffer* rb, u64 len)
+AETHER_API view ring_buffer_peek(RingBuffer* rb, u64 len)
 {
-    bytes_view v = {0};
+    view v = {0};
     if (!rb || !rb->base) return v;
 
     u64 write = atomic_load_acq_u64(&rb->write);
@@ -1684,11 +1642,11 @@ AETHER_API b8 ring_buffer_read(RingBuffer* rb, void* dst, u64 len)
     if (!rb || !rb->base) return false;
     if (len == 0) return true;
 
-    bytes_view view = ring_buffer_peek(rb, len);
-    if (!view.size) return false;
+    view v = ring_buffer_peek(rb, len);
+    if (!v.size) return false;
 
-    memcpy(dst, view.data, view.size);
-    ring_buffer_advance_read(rb, view.size);
+    memcpy(dst, v.data, v.size);
+    ring_buffer_advance_read(rb, v.size);
 
     return true;
 }
@@ -1752,7 +1710,7 @@ internal void* arena_push_or_fatal_(Arena* arena, u64 size, u64 align)
     return p;
 }
 
-AETHER_API char* c_str(Arena* arena, str8_view s)
+AETHER_API char* c_str(Arena* arena, str8 s)
 {
     AETHER_ASSERT_(arena != NULL);
     AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
@@ -1799,16 +1757,18 @@ AETHER_API char* c_str_push_fmt(Arena* arena, const char* fmt, ...)
     return dst;
 }
 
-AETHER_API str8 str8_push_copy(Arena* arena, str8_view src)
+AETHER_API str8 str8_push_copy(Arena* arena, str8 src)
 {
     AETHER_ASSERT_(arena != NULL);
     AETHER_ASSERT_(src.data != NULL || src.size == 0); /* NULL data with size > 0 is a caller bug */
 
-    str8 result;
-    result.size = src.size;
-    result.data = (u8*)arena_push_or_fatal_(arena, src.size + 1, 1);
-    if (src.size) memcpy(result.data, src.data, src.size);
-    result.data[result.size] = '\0';
+    str8 result = {0};
+    u64 size = src.size;
+    u8* data = (u8*)arena_push_or_fatal_(arena, src.size + 1, 1);
+    if (src.size) memcpy(data, src.data, src.size);
+    data[size] = '\0';
+    result.size = size;
+    result.data = data;
     return result;
 }
 
@@ -1856,26 +1816,29 @@ AETHER_API str8 str8_push_fmt(Arena* arena, const char* fmt, ...)
     return result;
 }
 
-AETHER_API str8 str8_concat(Arena* arena, str8_view a, str8_view b)
+AETHER_API str8 str8_concat(Arena* arena, str8 a, str8 b)
 {
     AETHER_ASSERT_(arena != NULL);
     AETHER_ASSERT_(a.data != NULL || a.size == 0); /* NULL data with size > 0 is a caller bug */
     AETHER_ASSERT_(b.data != NULL || b.size == 0); /* NULL data with size > 0 is a caller bug */
 
-    str8 result;
+    str8 result = {0};
 
-    result.size = a.size + b.size;
-    result.data = (u8*)arena_push_or_fatal_(arena, result.size+1, 1);
-    if (a.size) memcpy(result.data, a.data, a.size);
-    if (b.size) memcpy(result.data+a.size, b.data, b.size);
-    result.data[result.size] = '\0';
+    u64 size = a.size + b.size;
+    u8* data = (u8*)arena_push_or_fatal_(arena, size + 1, 1);
+    if (a.size) memcpy(data,          a.data, a.size);
+    if (b.size) memcpy(data + a.size, b.data, b.size);
 
+    data[size] = '\0';
+
+    result.size = size;
+    result.data = data;
     return result;
 }
 
-AETHER_API str8_view view_from_c_str(const char* s)
+AETHER_API str8 str8_from_c_str(const char* s)
 {
-    str8_view v = {0};
+    str8 v = {0};
 
     if (!s) return v;
 
@@ -1888,22 +1851,22 @@ AETHER_API str8_view view_from_c_str(const char* s)
     return v;
 }
 
-AETHER_API str8_view str8_slice(str8_view s, u64 start, u64 end)
+AETHER_API str8 str8_slice(str8 s, u64 start, u64 end)
 {
     AETHER_ASSERT_(start <= end && end <= s.size);
-    str8_view v;
+    str8 v;
     v.data = s.data + start;
     v.size = end - start;
     return v;
 }
 
-AETHER_API str8_view str8_skip(str8_view s, u64 n)
+AETHER_API str8 str8_skip(str8 s, u64 n)
 {
     AETHER_ASSERT_(n <= s.size);
     return str8_slice(s, n, s.size);
 }
 
-AETHER_API str8_view str8_drop(str8_view s, u64 n)
+AETHER_API str8 str8_drop(str8 s, u64 n)
 {
     AETHER_ASSERT_(n <= s.size);
     return str8_slice(s, 0, s.size - n);
@@ -1913,7 +1876,7 @@ internal b8 char_is_ws(u8 c)    { return c == ' ' || c == '\t' || c == '\n' || c
 internal b8 char_is_upper(u8 c) { return ('A' <= c && c <= 'Z'); }
 internal b8 char_is_lower(u8 c) { return ('a' <= c && c <= 'z'); }
 
-AETHER_API str8_view str8_trim(str8_view s)
+AETHER_API str8 str8_trim(str8 s)
 {
     u64 start = 0;
     while (start < s.size && char_is_ws(s.data[start])) start++;
@@ -1924,7 +1887,7 @@ AETHER_API str8_view str8_trim(str8_view s)
     return str8_slice(s, start, end);
 }
 
-AETHER_API str8_view str8_trim_left(str8_view s)
+AETHER_API str8 str8_trim_left(str8 s)
 {
     u64 start = 0;
     while (start < s.size && char_is_ws(s.data[start])) start++;
@@ -1932,7 +1895,7 @@ AETHER_API str8_view str8_trim_left(str8_view s)
     return str8_slice(s, start, s.size);
 }
 
-AETHER_API str8_view str8_trim_right(str8_view s)
+AETHER_API str8 str8_trim_right(str8 s)
 {
     u64 end = s.size;
     while ( end > 0 && char_is_ws(s.data[end-1])) end--;
@@ -1941,7 +1904,7 @@ AETHER_API str8_view str8_trim_right(str8_view s)
 }
 
 
-AETHER_API b8 str8_eq(str8_view a, str8_view b)
+AETHER_API b8 str8_eq(str8 a, str8 b)
 {
     AETHER_ASSERT_(a.data != NULL || a.size == 0); /* NULL data with size > 0 is a caller bug */
     AETHER_ASSERT_(b.data != NULL || b.size == 0); /* NULL data with size > 0 is a caller bug */
@@ -1952,7 +1915,7 @@ AETHER_API b8 str8_eq(str8_view a, str8_view b)
     return memcmp(a.data, b.data, a.size) == 0;
 }
 
-AETHER_API b8 str8_eq_nocase(str8_view a, str8_view b)
+AETHER_API b8 str8_eq_nocase(str8 a, str8 b)
 {
     if (a.size != b.size) return false;
 
@@ -1967,7 +1930,7 @@ AETHER_API b8 str8_eq_nocase(str8_view a, str8_view b)
 
 }
 
-AETHER_API b8 str8_has_prefix(str8_view s, str8_view prefix)
+AETHER_API b8 str8_has_prefix(str8 s, str8 prefix)
 {
     if (!prefix.data || !prefix.size || !s.data || !s.size) return false;
 
@@ -1979,7 +1942,7 @@ AETHER_API b8 str8_has_prefix(str8_view s, str8_view prefix)
     return true;
 }
 
-AETHER_API b8 str8_has_suffix(str8_view s, str8_view suffix)
+AETHER_API b8 str8_has_suffix(str8 s, str8 suffix)
 {
     if (!suffix.data || !suffix.size || !s.data || !s.size) return false;
 
@@ -1996,7 +1959,7 @@ AETHER_API b8 str8_has_suffix(str8_view s, str8_view suffix)
 }
 
 // todo(chris): update brute-force method to use Boyer-Moore-Horspool
-AETHER_API b8 str8_find(str8_view s, str8_view needle, u64* pos)
+AETHER_API b8 str8_find(str8 s, str8 needle, u64* pos)
 {
     if (needle.size == 0) { *pos = 0; return true; }
     if (needle.size > s.size) return false;
@@ -2011,12 +1974,12 @@ AETHER_API b8 str8_find(str8_view s, str8_view needle, u64* pos)
     return false;
 }
 
-AETHER_API b8 str8_find_last(str8_view s, str8_view needle, u64* pos)
+AETHER_API b8 str8_find_last(str8 s, str8 needle, u64* pos)
 {
     if (needle.size == 0) {*pos = s.size; return true;}
     b8 found = false;
     u64 base = 0;
-    str8_view rest = s;
+    str8 rest = s;
     u64 p;
     while (rest.size > 0 && str8_find(rest, needle, &p))
     {
@@ -2028,7 +1991,7 @@ AETHER_API b8 str8_find_last(str8_view s, str8_view needle, u64* pos)
     return found;
 }
 
-AETHER_API b8 str8_find_char(str8_view s, u8 c, u64* pos)
+AETHER_API b8 str8_find_char(str8 s, u8 c, u64* pos)
 {
     for (u64 i = 0; i < s.size; ++i)
     {
@@ -2037,7 +2000,7 @@ AETHER_API b8 str8_find_char(str8_view s, u8 c, u64* pos)
     return false;
 }
 
-AETHER_API i32 str8_cmp(str8_view a, str8_view b)
+AETHER_API i32 str8_cmp(str8 a, str8 b)
 {
     AETHER_ASSERT_(a.data != NULL || a.size == 0); /* NULL data with size > 0 is a caller bug */
     AETHER_ASSERT_(b.data != NULL || b.size == 0); /* NULL data with size > 0 is a caller bug */
@@ -2049,13 +2012,13 @@ AETHER_API i32 str8_cmp(str8_view a, str8_view b)
     return 0;
 }
 
-AETHER_API b8 str8_cut_ex(str8_view s, str8_view sep, str8_view* before, str8_view* after, Str8CutFlags flags)
+AETHER_API b8 str8_cut_ex(str8 s, str8 sep, str8* before, str8* after, Str8CutFlags flags)
 {
     AETHER_ASSERT_(s.data   != NULL || s.size   == 0);
     AETHER_ASSERT_(sep.data != NULL || sep.size == 0);
 
-    str8_view b     = s;
-    str8_view a     = {0};
+    str8 b     = s;
+    str8 a     = {0};
     b8        found = false;
 
     if (sep.size != 0)
@@ -2079,17 +2042,17 @@ AETHER_API b8 str8_cut_ex(str8_view s, str8_view sep, str8_view* before, str8_vi
     return found;
 }
 
-AETHER_API b8 str8_cut(str8_view s, str8_view sep, str8_view* before, str8_view* after)
+AETHER_API b8 str8_cut(str8 s, str8 sep, str8* before, str8* after)
 {
     return str8_cut_ex(s, sep, before, after, Str8CutFlags_None);
 }
 
-AETHER_API Str8List str8_split(Arena* arena, str8_view s, str8_view sep, Str8SplitFlags flags)
+AETHER_API Str8List str8_split(Arena* arena, str8 s, str8 sep, Str8SplitFlags flags)
 {
     Str8List list = {0};
 
-    str8_view before;
-    str8_view rest = s;
+    str8 before;
+    str8 rest = s;
     b8 more;
     do {
         more = str8_cut(rest, sep, &before, &rest);
@@ -2101,7 +2064,7 @@ AETHER_API Str8List str8_split(Arena* arena, str8_view s, str8_view sep, Str8Spl
     return list;
 }
 
-AETHER_API void str8_list_push(Arena* arena, Str8List* list, str8_view v)
+AETHER_API void str8_list_push(Arena* arena, Str8List* list, str8 v)
 {
     Str8Node* node = arena_push_t_nozero(arena, Str8Node);
     if (!node) FATAL("arena exhausted");
@@ -2118,7 +2081,7 @@ AETHER_API void str8_list_push(Arena* arena, Str8List* list, str8_view v)
 
 internal void str8_list_push_fmtv(Arena* arena, Str8List* list, const char* fmt, va_list args)
 {
-    str8_view v = view_from_str8(str8_push_fmtv(arena, fmt, args));
+    str8 v = str8_push_fmtv(arena, fmt, args);
     str8_list_push(arena, list, v);
 }
 
@@ -2130,7 +2093,7 @@ AETHER_API void str8_list_push_fmt(Arena* arena, Str8List* list, const char* fmt
     va_end(args);
 }
 
-AETHER_API str8 str8_join(Arena* arena, Str8List* list, str8_view sep)
+AETHER_API str8 str8_join(Arena* arena, Str8List* list, str8 sep)
 {
     str8 dst = {0};
 
@@ -2165,7 +2128,7 @@ AETHER_API Str8Array str8_list_to_array(Arena* arena, Str8List* list)
     Str8Array result = {0};
     if (!list) return result;
 
-    result.items = (str8_view*)arena_push_array_nozero(arena, str8_view, list->count);
+    result.items = (str8*)arena_push_array_nozero(arena, str8, list->count);
     if (!result.items) FATAL("arena exhausted");
     result.count = list->count;
 
@@ -2179,39 +2142,45 @@ AETHER_API Str8Array str8_list_to_array(Arena* arena, Str8List* list)
     return result;
 }
 
-AETHER_API str8 str8_to_upper(Arena* arena, str8_view s)
+AETHER_API str8 str8_to_upper(Arena* arena, str8 s)
 {
-    str8 result;
-    result.size = s.size;
-    result.data = (u8*)arena_push_or_fatal_(arena, s.size + 1, 1);
+    str8 result = {0};
+    u64 size = s.size;
+    u8* data = (u8*)arena_push_or_fatal_(arena, s.size + 1, 1);
 
     for (u64 i = 0; i < s.size; ++i)
-        result.data[i] = char_is_lower(s.data[i]) ? s.data[i] - 32 : s.data[i];
+        data[i] = char_is_lower(s.data[i]) ? s.data[i] - 32 : s.data[i];
 
-    result.data[result.size] = '\0';
+    data[size] = '\0';
+
+    result.size = size;
+    result.data = data;
     return result;
 }
 
-AETHER_API str8 str8_to_lower(Arena* arena, str8_view s)
+AETHER_API str8 str8_to_lower(Arena* arena, str8 s)
 {
-    str8 result;
-    result.size = s.size;
-    result.data = (u8*)arena_push_or_fatal_(arena, s.size + 1, 1);
+    str8 result = {0};
+    u64 size = s.size;
+    u8* data = (u8*)arena_push_or_fatal_(arena, s.size + 1, 1);
 
     for (u64 i = 0; i < s.size; ++i)
-        result.data[i] = char_is_upper(s.data[i]) ? s.data[i] + 32: s.data[i];
+        data[i] = char_is_upper(s.data[i]) ? s.data[i] + 32: s.data[i];
 
-    result.data[result.size] = '\0';
+    data[size] = '\0';
+
+    result.size = size;
+    result.data = data;
     return result;
 }
 
-AETHER_API str8 str8_replace(Arena* arena, str8_view s, str8_view old, str8_view target)
+AETHER_API str8 str8_replace(Arena* arena, str8 s, str8 old, str8 target)
 {
 
     u64 count = 0;
     u64 pos   = 0;
 
-    str8_view rest = s;
+    str8 rest = s;
     while (old.size > 0 && old.size<= rest.size && str8_find(rest, old, &pos))
     {
         count += 1;
@@ -2238,7 +2207,7 @@ AETHER_API str8 str8_replace(Arena* arena, str8_view s, str8_view old, str8_view
 }
 
 
-AETHER_API b8 str8_to_u64(str8_view s, u64* out)
+AETHER_API b8 str8_to_u64(str8 s, u64* out)
 {
     if (s.size == 0) return false;
 
@@ -2278,7 +2247,7 @@ AETHER_API b8 str8_to_u64(str8_view s, u64* out)
     return true;
 }
 
-AETHER_API b8 str8_to_i64(str8_view s, i64* out)
+AETHER_API b8 str8_to_i64(str8 s, i64* out)
 {
     if (s.size == 0) return false;
 
@@ -2323,7 +2292,7 @@ AETHER_API b8 str8_to_i64(str8_view s, i64* out)
     return true;
 }
 
-AETHER_API b8 str8_to_int(str8_view s, i64 min, i64 max, i64* out)
+AETHER_API b8 str8_to_int(str8 s, i64 min, i64 max, i64* out)
 {
     i64 v;
     if (!str8_to_i64(s, &v)) return false;
@@ -2334,7 +2303,7 @@ AETHER_API b8 str8_to_int(str8_view s, i64 min, i64 max, i64* out)
 }
 
 
-AETHER_API b8 str8_to_u8(str8_view s,  u8* out)
+AETHER_API b8 str8_to_u8(str8 s,  u8* out)
 {
     i64 v;
     if (!str8_to_int(s, 0, AETHER_U8_MAX_, &v)) return false;
@@ -2343,7 +2312,7 @@ AETHER_API b8 str8_to_u8(str8_view s,  u8* out)
     return true;
 }
 
-AETHER_API b8 str8_to_u16(str8_view s, u16* out)
+AETHER_API b8 str8_to_u16(str8 s, u16* out)
 {
     i64 v;
     if (!str8_to_int(s, 0, AETHER_U16_MAX_, &v)) return false;
@@ -2352,7 +2321,7 @@ AETHER_API b8 str8_to_u16(str8_view s, u16* out)
     return true;
 }
 
-AETHER_API b8 str8_to_u32(str8_view s, u32* out)
+AETHER_API b8 str8_to_u32(str8 s, u32* out)
 {
     i64 v;
     if (!str8_to_int(s, 0, AETHER_U32_MAX_, &v)) return false;
@@ -2361,7 +2330,7 @@ AETHER_API b8 str8_to_u32(str8_view s, u32* out)
     return true;
 }
 
-AETHER_API b8 str8_to_i8(str8_view s,  i8* out)
+AETHER_API b8 str8_to_i8(str8 s,  i8* out)
 {
     i64 v;
     if (!str8_to_int(s, AETHER_I8_MIN_, AETHER_I8_MAX_, &v)) return false;
@@ -2370,7 +2339,7 @@ AETHER_API b8 str8_to_i8(str8_view s,  i8* out)
     return true;
 }
 
-AETHER_API b8 str8_to_i16(str8_view s, i16* out)
+AETHER_API b8 str8_to_i16(str8 s, i16* out)
 {
     i64 v;
     if (!str8_to_int(s, AETHER_I16_MIN_, AETHER_I16_MAX_, &v)) return false;
@@ -2379,7 +2348,7 @@ AETHER_API b8 str8_to_i16(str8_view s, i16* out)
     return true;
 }
 
-AETHER_API b8 str8_to_i32(str8_view s, i32* out)
+AETHER_API b8 str8_to_i32(str8 s, i32* out)
 {
     i64 v;
     if (!str8_to_int(s, AETHER_I32_MIN_, AETHER_I32_MAX_, &v)) return false;
@@ -2388,7 +2357,7 @@ AETHER_API b8 str8_to_i32(str8_view s, i32* out)
     return true;
 }
 
-AETHER_API b8 str8_to_f64(str8_view s, f64* out)
+AETHER_API b8 str8_to_f64(str8 s, f64* out)
 {
     // todo(chris): handroll this for the excercise
     char buf[64];
@@ -2408,7 +2377,7 @@ AETHER_API b8 str8_to_f64(str8_view s, f64* out)
     return true;
 }
 
-AETHER_API Utf8Decode utf8_decode(str8_view s)
+AETHER_API Utf8Decode utf8_decode(str8 s)
 {
     Utf8Decode d = {0};
     if (s.size == 0) return d;
@@ -2485,7 +2454,7 @@ AETHER_API u8 utf8_codepoint_width(u32 codepoint)
     return 1;
 }
 
-AETHER_API u32 utf8_width(str8_view s)
+AETHER_API u32 utf8_width(str8 s)
 {
     u32 width  = 0;
     u64 offset = 0;
@@ -2495,7 +2464,7 @@ AETHER_API u32 utf8_width(str8_view s)
 
     while (offset < s.size)
     {
-        str8_view  rest = str8_skip(s, offset);
+        str8  rest = str8_skip(s, offset);
         Utf8Decode d    = utf8_decode(rest);
 
         u32 cp  = d.codepoint;
@@ -2549,20 +2518,20 @@ AETHER_API bytes  file_read(Arena* arena, const char* path)
     return result;
 }
 
-AETHER_API u64 file_write(const char* path, bytes_view data)
+AETHER_API u64 file_write(const char* path, const void* src, u64 len)
 {
     void* h = os_file_open_for_write(path);
     if (!h) return 0;
 
-    b8 ok = os_file_write(h, data.data, data.size);
+    b8 ok = os_file_write(h, src, len);
     os_file_close(h);
 
-    return ok ? data.size : 0;
+    return ok ? len : 0;
 }
 
-AETHER_API bytes_view  file_map(const char* path)
+AETHER_API view file_map(const char* path)
 {
-    bytes_view v = {0};
+    view v = {0};
     void* h = os_file_open_for_read(path);
     if (!h) { return v; }
 
@@ -2580,9 +2549,9 @@ AETHER_API bytes_view  file_map(const char* path)
     return v;
 }
 
-AETHER_API void  file_unmap(bytes_view buf)
+AETHER_API void file_unmap(view v)
 {
-    os_file_unmap(buf.data, buf.size);
+    os_file_unmap(v.data, v.size);
 }
 
 /* ------------------------------------------------------------------------- */
