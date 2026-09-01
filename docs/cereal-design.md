@@ -124,7 +124,7 @@ multi-port management.
    case for a simple query/reply transducer. Noted as a known gap
    (deferred, not solved) rather than adding a knob with no caller.
 
-7. **Device path is an opaque `str8_view`, OS-native syntax, no
+7. **Device path is an opaque `str8`, OS-native syntax, no
    normalization.** `"COM3"` vs. `"\\.\COM10"` (ports ≥10 need the prefix
    on Windows) vs. `"/dev/ttyUSB0"` — caller supplies the right string for
    its platform. No cross-platform path table, no enumeration. Same
@@ -171,22 +171,26 @@ enum SerialResult_
     SerialResult_Error,
 };
 
-CEREAL_API SerialPort   serial_open(str8_view device, SerialConfig cfg); /* {0} on failure */
+CEREAL_API SerialPort   serial_open(str8 device, SerialConfig cfg); /* {0} on failure */
 CEREAL_API void         serial_close(SerialPort* p);                    /* idempotent */
-CEREAL_API SerialResult serial_write(SerialPort p, bytes_view data, u64* out_sent);
+CEREAL_API SerialResult serial_write(SerialPort p, const void* src, u64 len, u64* out_sent);
 CEREAL_API SerialResult serial_read(SerialPort p, void* buf, u64 cap, u64* out_read);
 ```
 
-`bytes_view`/`str8_view`/`u8`/`u32`/`u64` from `aether.h`. `CEREAL_API`
-mirrors `IRIS_API`/`AETHER_API` (static/DLL linkage defines, same
-`*_IMPLEMENTATION` single-header pattern).
+`str8`/`u8`/`u32`/`u64` from `aether.h`. `serial_write` takes a raw
+`(const void* src, u64 len)` pair rather than a wrapper struct, matching
+iris's `tcp_send`/`udp_send_to` convention (aether 0.1.0) — one-shot
+"consume this buffer" calls don't need a named type, and it lets a caller
+hand over any pointer (a `str8`'s `.data`, a `u8[]`, a `const char*`)
+without a cast. `CEREAL_API` mirrors `IRIS_API`/`AETHER_API` (static/DLL
+linkage defines, same `*_IMPLEMENTATION` single-header pattern).
 
 ## Internal `os_` surface
 
 ```c
-internal u64          os_serial_open(str8_view device, SerialConfig cfg);
+internal u64          os_serial_open(str8 device, SerialConfig cfg);
 internal void          os_serial_close(u64 h);
-internal SerialResult os_serial_write(u64 h, const u8* data, u64 len, u64* out_sent);
+internal SerialResult os_serial_write(u64 h, const void* data, u64 len, u64* out_sent);
 internal SerialResult os_serial_read(u64 h, u8* buf, u64 cap, u64* out_read);
 ```
 
@@ -208,15 +212,15 @@ directly — no `GetProcAddress` resolution needed.
 SerialConfig cfg = { .baud = 9600, .data_bits = 8, .parity = Parity_None,
                       .stop_bits = StopBits_One, .flow = FlowControl_None,
                       .read_timeout_ms = 200 };
-SerialPort port = serial_open(str8_view_from_cstr("COM3"), cfg);
+SerialPort port = serial_open(STR("COM3"), cfg);
 
 for (;;)
 {
     if (shutdown_requested) break;           /* checked once per tick, see decision 3 */
 
-    bytes_view query = str8_as_bytes(str8_lit("P?\r\n"));
+    str8 query = STR("P?\r\n");
     u64 sent = 0;
-    if (serial_write(port, query, &sent) != SerialResult_Ok) { /* log, continue */ }
+    if (serial_write(port, query.data, query.size, &sent) != SerialResult_Ok) { /* log, continue */ }
 
     u8 buf[64]; u64 got = 0;
     SerialResult r = serial_read(port, buf, sizeof(buf), &got);
