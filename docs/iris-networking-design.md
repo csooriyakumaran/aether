@@ -202,7 +202,7 @@ typedef struct NetAddr { u8 ip[4]; u16 port; } NetAddr;  /* ip wire-order, port 
 IRIS_API NetAddr net_addr(u8 a, u8 b, u8 c, u8 d, u16 port);
 IRIS_API NetAddr net_addr_any(u16 port);
 IRIS_API NetAddr net_addr_loopback(u16 port);
-IRIS_API b8      net_addr_parse(str8_view dotted_quad, u16 port, NetAddr* out);
+IRIS_API b8      net_addr_parse(str8 dotted_quad, u16 port, NetAddr* out);
 
 typedef struct Socket { u64 handle; } Socket;   /* {0} = invalid */
 
@@ -225,19 +225,23 @@ enum NetResult_
 IRIS_API Socket    tcp_listen(NetAddr addr, u32 backlog);
 IRIS_API Socket    tcp_accept(Socket listener, NetAddr* out_peer);
 IRIS_API Socket    tcp_connect(NetAddr addr);
-IRIS_API NetResult tcp_send(Socket s, bytes_view data, u64* out_sent); /* partial sends are Ok */
+IRIS_API NetResult tcp_send(Socket s, const void* src, u64 len, u64* out_sent); /* partial sends are Ok */
 IRIS_API NetResult tcp_recv(Socket s, void* buf, u64 cap, u64* out_recv);
 
 /* UDP. Datagrams send whole or not at all; oversized datagrams are
    NetResult_Error. udp_open with port 0 = ephemeral send-only socket. */
 IRIS_API Socket    udp_open(NetAddr bind_addr);
-IRIS_API NetResult udp_send_to(Socket s, NetAddr to, bytes_view datagram);
+IRIS_API NetResult udp_send_to(Socket s, NetAddr to, const void* src, u64 len);
 IRIS_API NetResult udp_recv_from(Socket s, void* buf, u64 cap, u64* out_recv, NetAddr* out_from);
 ```
 
-Notes (unchanged from the superseded doc): `bytes_view`/`str8_view`/`b8`
-come from `aether.h`; names are unprefixed (`net_`, `socket_`, `tcp_`,
-`udp_`), none colliding with libc/Winsock symbols.
+Notes (aether 0.1.0): `str8`/`b8` come from `aether.h`; names are
+unprefixed (`net_`, `socket_`, `tcp_`, `udp_`), none colliding with
+libc/Winsock symbols. `tcp_send`/`udp_send_to` take a raw `(const void*
+src, u64 len)` pair rather than a wrapper struct — a one-shot "consume
+this buffer" call doesn't need a named type, and it lets a caller hand
+over any pointer (a `str8`'s `.data`, a `const char*`, a ring buffer
+`view`'s `.data`) without a cast.
 
 ## Internal `os_` surface (implementation, platform block)
 
@@ -248,11 +252,11 @@ internal void      os_net_shutdown(void);
 internal u64       os_tcp_listen(NetAddr addr, u32 backlog);
 internal u64       os_tcp_accept(u64 h, NetAddr* out_peer);
 internal u64       os_tcp_connect(NetAddr addr);
-internal NetResult os_tcp_send(u64 h, const u8* data, u64 len, u64* out_sent);
+internal NetResult os_tcp_send(u64 h, const void* data, u64 len, u64* out_sent);
 internal NetResult os_tcp_recv(u64 h, u8* buf, u64 cap, u64* out_recv);
 
 internal u64       os_udp_open(NetAddr bind_addr);
-internal NetResult os_udp_send_to(u64 h, NetAddr to, const u8* data, u64 len);
+internal NetResult os_udp_send_to(u64 h, NetAddr to, const void* data, u64 len);
 internal NetResult os_udp_recv_from(u64 h, u8* buf, u64 cap, u64* out_recv, NetAddr* out_from);
 
 internal void      os_socket_close(u64 h);
@@ -349,7 +353,7 @@ applied elsewhere in this doc:
   today (`recv`'s `0` vs. `SOCKET_ERROR` is enough to tell `Closed` from
   `Error`). Add it when `net_last_error` gets a caller.
 - `inet_pton` / `getaddrinfo` — `net_addr_parse` is a manual dotted-quad
-  parse over `str8_view` (decision 4), not a resolver call.
+  parse over `str8` (decision 4), not a resolver call.
 - `select` / `WSAPoll` — removed with `net_poll` (decision 10).
 
 ## Usage sketch — the consumer's network thread
@@ -383,11 +387,11 @@ int network_thread_fn(void* user)
             if (r == NetResult_Ok && got) { /* append to line splitter -> cmd channel */ }
             if (r != NetResult_Ok) break;   /* Closed or Error: fall through, do not self-close */
 
-            bytes_view rec = /* peek one framed record's payload */;
+            view rec = /* peek one framed record's payload */;
             if (rec.size)
             {
                 u64 sent = 0;
-                if (tcp_send(client, rec, &sent) == NetResult_Ok)
+                if (tcp_send(client, rec.data, rec.size, &sent) == NetResult_Ok)
                     ring_buffer_advance_read(shared->data_rb, sent);
                 else break;
             }
