@@ -5,13 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** `str8` no longer aliases `bytes`. It's now its own struct `{ const u8* data; u64 size; }` -- immutable, matching the fact that nothing in the API mutates a `str8`'s bytes in place; every construction function (`str8_push_copy`, `str8_concat`, `str8_join`, `str8_to_upper`/`str8_to_lower`, `str8_replace`, etc.) now stages writes through a local non-const `u8*` buffer and only assigns into the result's `const`-typed `.data` at the end. `bytes` is unchanged (`u8* data`, mutable) -- still the type for owned/writable buffers (`file_read`, `ring_buffer_reserve`).
+- **Breaking:** `file_write`, and iris's `tcp_send`/`udp_send_to` now take `(const void* src, u64 len)` instead of `bytes`/`bytes_view` struct parameters. Matches the convention `ring_buffer_write` / `os_file_write` already used; avoids the MSVC x64 ABI passing a >8-byte struct by hidden reference instead of registers; and lets a caller pass any pointer type (e.g., a bare `const char*` string) with no cast. Internal `os_tcp_send`/`os_udp_send_to` follow suit (`const u8*` -> `const void*`), casting to `const char*` only at the WinSock call itself.
+- `view_from_c_str` renamed to `str8_from_c_str`.
+- `enum`s are now all `typedef`'d to fixed width integers
+- **Breaking:** `local_persist` alias for `static` used in function bodies renamed -> `persist`.
+- `static` aliases `internal`/`global`/`persist` in `aether.h` and `iris.h` now all defended by `#ifndef` guards in case either header changes the alias name both headers will still be internally consistent regardless of include order.
+
 ### Added
+- `view`: a single `{ const u8* data; u64 size; }` read-only borrow type, replacing the removed `str8_view`/`bytes_view` for the two APIs that actually return a non-owning span into memory the caller shouldn't write through: `ring_buffer_peek` (a live, in-flight ring span) and `file_map`/`file_unmap` (a `PAGE_READONLY` mapping). Everywhere else that used to return a "view" for its no-copy-borrow property alone (e.g., iris's outbound socket data) keeps the no-copy behaviour but drops the immutability guarantee -- see `file_write`/`tcp_send`/`udp_send_to` above.
 - `utf8_width` to calculate the total terminal column width of a utf8 string. Correctly collapses codepoints joined by a zero-width-joiner (ZWJ), i.e., `U+200D`, as well as emoji skin-tone modifiers, i.e, `U+1F3FB-U+1F3FF`. Does not split lines on `\n`, so callers must decide behaviour and split before calling if desired. 
 
-### Changed
-- `enum`s are now all `typedef`'d to fixed width integers
-- ***breaking** `local_persist` alias for `static` used in function bodies renamed -> `persist`.
-- `static` aliases `intenral`/`global`/`persist` in `aether.h` and `iris.h` now all defended by `#ifndef` guards in case either header changes the alias name both headers will still be internally consistent regardless of include order. 
+### Removed
+- `str8_view`, `bytes_view`, `str16_view`, and their constructors (`view_from_bytes`, `view_from_raw`, `view_from_str8`, `view_from_str16`). `str8`/`bytes`/`view` (above) cover every case these served.
+- Disabled `os_get_last_error` / `os_error_string` stub (dead since v0.0.13, never gained a caller) -- deleted outright rather than updated, since it referenced the now-removed `view_from_raw`.
 
 
 ## [0.0.17] - 2026-08-18

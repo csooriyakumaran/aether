@@ -203,7 +203,7 @@ arena_pop_to(arena, mark);
 
 ## Use Case: Temporary File Processing
 
-A common pattern is to use a scratch arena for temporary data that only needs to live for the duration of a task. `file_read` reads an entire file into the arena in one call and returns a `bytes` view (`{ u8* data; u64 size; }`).
+A common pattern is to use a scratch arena for temporary data that only needs to live for the duration of a task. `file_read` reads an entire file into the arena in one call and returns a `bytes` span (`{ u8* data; u64 size; }`).
 
 > `arena_alloc(MB(64))` reserves 64 MB of virtual address space. Initial commit, zeroing, and decommit behavior follow the build-configuration defaults described above.
 
@@ -258,9 +258,9 @@ No individual deallocation is required. The file bytes live in the arena, so onc
 ```c
 str8 report = str8_push_fmt(arena, "residual = %e\n", residual);
 
-/* str8_view and bytes_view are the same type, so a string view
-   can be handed to file_write directly */
-if (file_write("report.txt", view_from_str8(report)) != report.size)
+/* file_write takes a raw (const void* src, u64 len) pair, so any
+   buffer -- an str8, a bytes span, a plain array -- hands off directly */
+if (file_write("report.txt", report.data, report.size) != report.size)
 {
     fprintf(stderr, "could not write report.txt\n");
 }
@@ -270,10 +270,10 @@ The write is all-or-nothing from the caller's perspective: anything less than th
 
 ### Read-only files: `file_map`
 
-When a file is large and read-only, `file_map` maps it directly into the address space instead of copying it into an arena. It returns a `bytes_view` (`const u8*`) whose pages are backed by the OS and faulted in on demand.
+When a file is large and read-only, `file_map` maps it directly into the address space instead of copying it into an arena. It returns a `view` (`{ const u8* data; u64 size; }`) whose pages are backed by the OS and faulted in on demand.
 
 ```c
-bytes_view file = file_map("big.dat");   /* OS-backed pages, not arena memory */
+view file = file_map("big.dat");   /* OS-backed pages, not arena memory */
 if (file.data)
 {
     process_file_ro(file.data, file.size);
@@ -334,8 +334,9 @@ Arena-backed `str8` results (`str8_push_copy`, `str8_push_fmt`, `str8_concat`,
 `str8_join`, ...) are NUL-terminated by convention: `size` excludes the
 terminator, but the byte past the end is always `'\0'`, so `(const char*)s.data`
 can be handed to C APIs directly when the contents contain no embedded NULs.
-`str8_view` carries no such guarantee — use `c_str(arena, view)` to make a
-terminated copy of a view.
+A `str8` obtained by slicing (`str8_slice`, `str8_skip`, `str8_trim`, ...)
+borrows into existing memory and carries no such guarantee — use
+`c_str(arena, s)` to make a terminated copy.
 
 ```c
 #include "aether/aether.h"
@@ -349,9 +350,9 @@ void string_example(void)
     /* Basic arena-backed strings                   */
     /*----------------------------------------------*/
 
-    /* Literal to str8_view then copy into the arena */
-    str8_view src = STR("hello, world");
-    str8      s   = str8_push_copy(arena, src);
+    /* Literal to str8, then copy into the arena */
+    str8 src = STR("hello, world");
+    str8 s   = str8_push_copy(arena, src);
 
     /* Print using STR8_FMT / STR8_ARG */
     printf("s = " STR8_FMT "\n", STR8_ARG(s));
@@ -571,7 +572,7 @@ The requested capacity is rounded up to a power of two that is at least the OS a
 | `ring_buffer_reserve`         | Return a writable `bytes` span of `len` bytes without publishing it. `{0}` if `len` exceeds free space/capacity, or a reservation is already outstanding. |
 | `ring_buffer_commit`          | Publish `len <= reserved` bytes from the outstanding reservation, advancing the write cursor. `false` if nothing is reserved or `len` exceeds it. |
 | `ring_buffer_cancel_reservation` | Drop the outstanding reservation without publishing anything.                             |
-| `ring_buffer_peek`            | Return a contiguous `bytes_view` of `len` bytes **without** consuming. `{0}` if `len` unavailable. |
+| `ring_buffer_peek`            | Return a contiguous `view` of `len` bytes **without** consuming. `{0}` if `len` unavailable. |
 | `ring_buffer_read`            | Copy `len` bytes out and advance the read cursor. Returns `false` if `len` unavailable; `len == 0` succeeds as a no-op. |
 | `ring_buffer_advance_read`    | Advance the read cursor by `len` **without** copying (zero-copy consume). `false` if `len` exceeds available. |
 | `ring_buffer_release`         | Unmap both views, free the reservation, and zero the struct.                                 |
@@ -589,7 +590,7 @@ if (!ring_buffer_write(&rb, frame, sizeof(frame)))
 }
 
 /* consumer: inspect before committing to a read */
-bytes_view head = ring_buffer_peek(&rb, sizeof(frame));
+view head = ring_buffer_peek(&rb, sizeof(frame));
 if (head.size)
 {
     /* head.data is ONE contiguous span even when the logical data wraps
@@ -609,7 +610,7 @@ For a sink that can read straight from the buffer — e.g. a socket `send()` —
 
 ```c
 /* point the socket straight at the buffer; no intermediate copy */
-bytes_view v = ring_buffer_peek(&rb, ring_buffer_available(&rb));
+view v = ring_buffer_peek(&rb, ring_buffer_available(&rb));
 if (v.size)
 {
     i64 n = send(sock, (const char*)v.data, (int)v.size, 0);  /* may accept < v.size */
@@ -700,9 +701,9 @@ enum NetResult_ { NetResult_OK = 0, NetResult_Closed, NetResult_Error };
 | `tcp_listen(addr, backlog)` | Bind + listen. `{0}` on failure. |
 | `tcp_accept(listener, &out_peer)` | Blocks until a connection arrives. `{0}` only on cancellation or a hard failure — never "nobody pending yet". |
 | `tcp_connect(addr)` | Blocking handshake. `{0}` on failure. |
-| `tcp_send(s, data, &out_sent)` / `tcp_recv(s, buf, cap, &out_recv)` | Blocking; partial sends report `out_sent < data.size` rather than retrying internally — callers doing zero-copy sends drive their own retry. |
+| `tcp_send(s, src, len, &out_sent)` / `tcp_recv(s, buf, cap, &out_recv)` | Blocking; `src` is a raw `const void*` (no wrapper struct, no cast needed for e.g. a `const char*`). Partial sends report `out_sent < len` rather than retrying internally — callers doing zero-copy sends drive their own retry. |
 | `udp_open(bind_addr)` | Bind a UDP socket. `{0}` on failure. |
-| `udp_send_to(s, to, datagram)` / `udp_recv_from(s, buf, cap, &out_recv, &out_from)` | Blocking; datagrams send whole or not at all — an oversized datagram is `NetResult_Error`, never a partial count. `udp_recv_from` fills the sender's address. |
+| `udp_send_to(s, to, src, len)` / `udp_recv_from(s, buf, cap, &out_recv, &out_from)` | Blocking; datagrams send whole or not at all — an oversized datagram is `NetResult_Error`, never a partial count. `udp_recv_from` fills the sender's address. |
 
 > [!NOTE]
 > There is no non-blocking mode and no readiness-polling API. Each socket is owned by exactly one thread doing blocking I/O on it; a coordinator cancels it by calling `socket_close` from the outside. See `docs/iris-networking-design.md` for the reasoning.
@@ -742,7 +743,7 @@ Socket sock_a = udp_open(addr_a);
 Socket sock_b = udp_open(addr_b);
 
 const char* msg = "hello";
-udp_send_to(sock_a, addr_b, view_from_raw(msg, strlen(msg)));
+udp_send_to(sock_a, addr_b, msg, strlen(msg));
 
 u8 buf[64]; u64 got = 0; NetAddr from = {0};
 udp_recv_from(sock_b, buf, sizeof(buf), &got, &from);   /* from == addr_a */
