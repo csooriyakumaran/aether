@@ -3,6 +3,22 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- iris: `socket_local_addr(Socket s, NetAddr* out)` — wraps `getsockname`, resolved into the cached `WS2API` table alongside everything else `net_init` sets up. Needed to make the existing "`udp_open` with port `0` = ephemeral" support actually usable on the receiving end: nothing previously let a caller discover which port the OS picked, so a bind-to-`0` socket could only send, never tell a peer where to reply.
+
+### Changed
+- **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
+
+### Fixed
+- aether: `str8_trim`/`str8_trim_left`/`str8_trim_right`/`str8_eq_nocase`/`str8_find`/`str8_find_last`/`str8_find_char`/`str8_has_prefix`/`str8_has_suffix` now guard against `NULL` data with `size > 0` via `AETHER_ASSERT_`, matching every other string-query function in the header. `str8_find`/`str8_find_last`/`str8_find_char` previously had no guard at all; `str8_has_prefix`/`str8_has_suffix` used a plain `if (!x)` that silently treated a `NULL` input as "no match" in both debug and release instead of flagging caller error.
+- aether: `str8_find`/`str8_find_last`/`str8_find_char` no longer unconditionally dereference their `pos` out-param — it's now optional (`if (pos) *pos = ...`), matching how iris's `out_recv`/`out_sent`/etc. already treat their out-params. Previously e.g. `str8_find(s, STR(""), NULL)` (empty needle, no `pos`) crashed on the unconditional write.
+- aether: `str8_replace`'s length-delta computation is now `(i64)target.size - (i64)old.size` instead of `(i64)(target.size - old.size)` — the old form subtracted two `u64`s and cast the possibly-wrapped result, correct only via the 2's-complement round trip and easy to "sanitize" into a real bug at the next edit; rewritten so correctness doesn't depend on that being understood at every future call site.
+- iris: WinSock function pointers (`socket`, `bind`, `listen`, `accept`, `connect`, `send`, `recv`, `sendto`, `recvfrom`, `htons`, `ntohs`, `closesocket`, `WSAStartup`, `WSACleanup`) are now resolved once via `GetProcAddress` in `net_init` and cached in a private `WS2API` struct, instead of every call re-resolving its own symbol via `os_ws2_sym_`. `net_init` now fails outright if any symbol fails to resolve, closing two bugs the old per-call resolution masked: `os_socket_close` used to zero its `Socket` handle even when `closesocket` failed to resolve, leaking the OS handle invisibly; and `os_addr_to_sockaddr_`/`os_sockaddr_to_addr_` used to silently substitute port `0` when `htons`/`ntohs` failed to resolve instead of surfacing an error. Also removes a `GetProcAddress` call from the hottest path in the library (every `tcp_send`/`tcp_recv`/`udp_send_to`/`udp_recv_from`).
+- iris: `os_tcp_accept`/`os_tcp_connect` now check the `TCP_NODELAY` `setsockopt` return value and close+fail the socket on error, instead of discarding it — the header already documents "`TCP_NODELAY` is always set" but nothing enforced that claim.
+- iris: `socket_close` now claims the handle with `atomic_load_acq_u64` + `atomic_cas_u64` before closing it, instead of a plain read followed by a plain (later atomic-store) zero. Closes a TOCTOU: if `socket_close` is ever called from two threads racing on the same shared `Socket*` (contrary to the documented single-owner-copy usage pattern), both could previously read the same handle and both call the OS close on it — the CAS makes zeroing-and-claiming atomic, so only one racing caller ever proceeds to `os_socket_close`.
+
 ## [0.0.18] - 2026-09-01
 
 ### Changed
