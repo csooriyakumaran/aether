@@ -1497,7 +1497,12 @@ AETHER_API void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
     AETHER_ASSERT_(arena->pos <= arena->reserved_size);
 
     u64 aligned_pos = align_forward_u64(arena->pos, align);
-    if (aligned_pos < arena->pos || aligned_pos > arena->reserved_size || size > arena->reserved_size - aligned_pos)
+
+    /* computed up front, guarded on its own, so `size > remaining` below is
+       safe from unsigned underflow no matter how these checks get reordered */
+    u64 remaining = (aligned_pos <= arena->reserved_size) ? (arena->reserved_size - aligned_pos) : 0;
+
+    if (aligned_pos < arena->pos || aligned_pos > arena->reserved_size || size > remaining)
     {
         AETHER_ASSERT_(!"arena_push overflow"); return NULL;
     }
