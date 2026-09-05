@@ -417,6 +417,7 @@ AETHER_STATIC_ASSERT(sizeof(void*) == 8, "aether atomics require a 64-bit target
     #if AETHER_ARCH_X64
         #define AETHER_MSVC_BARRIER_() _ReadWriteBarrier()
     #else
+        /* DMB ISH: full two-way barrier, stronger than acquire/release alone need -- deliberate, not an oversight */
         #define AETHER_MSVC_BARRIER_() __dmb(0x0B)
     #endif
 #endif
@@ -651,9 +652,9 @@ AETHER_API b8        str8_eq(str8 a, str8 b);
 AETHER_API b8        str8_eq_nocase(str8 a, str8 b);
 AETHER_API b8        str8_has_prefix(str8 s, str8 prefix);
 AETHER_API b8        str8_has_suffix(str8 s, str8 suffix);
-AETHER_API b8        str8_find(str8 s, str8 needle, u64* pos);
-AETHER_API b8        str8_find_last(str8 s, str8 needle, u64* pos);
-AETHER_API b8        str8_find_char(str8 s, u8 c, u64* pos);
+AETHER_API b8        str8_find(str8 s, str8 needle, u64* out_pos);
+AETHER_API b8        str8_find_last(str8 s, str8 needle, u64* out_pos);
+AETHER_API b8        str8_find_char(str8 s, u8 c, u64* out_pos);
 AETHER_API i32       str8_cmp(str8 a, str8 b); /* memcmp-style ordering */
 
 // --- cut / split / list / join --- 
@@ -673,12 +674,12 @@ AETHER_API str8      str8_replace(Arena* arena, str8 s, str8 old, str8 target); 
 // --- parsing --- 
 AETHER_API b8        str8_to_int(str8 s, i64 min, i64 max, i64* out);
 
-AETHER_API b8        str8_to_u8(str8 s,  u8* out);
+AETHER_API b8        str8_to_u8(str8 s,  u8*  out);
 AETHER_API b8        str8_to_u16(str8 s, u16* out);
 AETHER_API b8        str8_to_u32(str8 s, u32* out);
 AETHER_API b8        str8_to_u64(str8 s, u64* out);
 
-AETHER_API b8        str8_to_i8(str8 s,  i8* out);
+AETHER_API b8        str8_to_i8(str8 s,  i8*  out);
 AETHER_API b8        str8_to_i16(str8 s, i16* out);
 AETHER_API b8        str8_to_i32(str8 s, i32* out);
 AETHER_API b8        str8_to_i64(str8 s, i64* out);
@@ -1158,7 +1159,7 @@ internal u64 os_time_frequency(void)
 #endif
 }
 
-internal void* os_create_timer(void)
+internal void* os_timer_create(void)
 {
 #if AETHER_OS_WINDOWS
     HANDLE h = CreateWaitableTimerExW(
@@ -1225,7 +1226,24 @@ internal void os_thread_yield(void)
 #else
     #error "AETHER: OS thread yield not implemented for this platform"
 #endif
+}
 
+internal void os_thread_sleep_ms(u32 ms)
+{
+#if AETHER_OS_WINDOWS
+    if (ms == 0) { os_thread_yield(); return; }
+    HANDLE h = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!h) { Sleep(ms); return; } /* pre-1803: flag is rejected */
+    LARGE_INTEGER due;
+    due.QuadPart = -(LONGLONG)ms * 10000; /* relative, 100 ns units */
+    if (SetWaitableTimer(h, &due, 0, NULL, NULL, FALSE))
+        WaitForSingleObject(h, INFINITE);
+    else
+        Sleep(ms);
+    CloseHandle(h);
+#else
+    #error "AETHER: OS thread sleep ms not implemented on this platform"
+#endif
 }
 typedef struct ThreadStart_ { thread_fn fn; void* user; u64 taken; } ThreadStart_;
 
@@ -1240,6 +1258,8 @@ internal unsigned __stdcall os_thread_thunk_(void* arg)
 }
 #endif // AETHER_OS_WINDOWS
 
+#define AETHER_THREAD_CREATE_SPIN_LIMIT_ 1000
+
 internal void* os_thread_create(thread_fn fn, void* user)
 {
     ThreadStart_ start = {0};
@@ -1252,7 +1272,12 @@ internal void* os_thread_create(thread_fn fn, void* user)
     #error "AETHER: OS thread create not implemented on this platform"
 #endif
     if (!h) return NULL;
-    while (!atomic_load_acq_u64(&start.taken)) os_thread_yield();
+    u64 spins = 0;
+    while (!atomic_load_acq_u64(&start.taken))
+    {
+        if (spins < AETHER_THREAD_CREATE_SPIN_LIMIT_) { os_thread_yield();     spins += 1; }
+        else                                          { os_thread_sleep_ms(1); spins  = 0; } 
+    }
     return h;
 }
 
@@ -1292,23 +1317,6 @@ internal b8 os_thread_set_affinity(void* h, u32 core_index)
 #endif
 }
 
-internal void os_thread_sleep_ms(u32 ms)
-{
-#if AETHER_OS_WINDOWS
-    if (ms == 0) { os_thread_yield(); return; }
-    HANDLE h = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-    if (!h) { Sleep(ms); return; } /* pre-1803: flag is rejected */
-    LARGE_INTEGER due;
-    due.QuadPart = -(LONGLONG)ms * 10000; /* relative, 100 ns units */
-    if (SetWaitableTimer(h, &due, 0, NULL, NULL, FALSE))
-        WaitForSingleObject(h, INFINITE);
-    else
-        Sleep(ms);
-    CloseHandle(h);
-#else
-    #error "AETHER: OS thread sleep ms not implemented on this platform"
-#endif
-}
 
 internal b8 os_process_set_priority_class(ProcessPriorityClass c)
 {
@@ -1378,6 +1386,8 @@ internal u64 align_forward_u64(u64 value, u64 align)
     AETHER_ASSERT_((align & (align - 1)) == 0);
 
     u64 mask = align - 1;
+    if (value > AETHER_U64_MAX_ - mask) { AETHER_ASSERT_(!"align_forward_u64 overflow"); return AETHER_U64_MAX_; }
+
     return (value + mask) & ~mask;
 }
 
@@ -1435,7 +1445,7 @@ AETHER_API Arena* arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 
 
     u64 pagesize = os_mem_pagesize();
 
-    reserve_size = align_forward_u64(reserve_size, pagesize);
+    reserve_size         = align_forward_u64(reserve_size, pagesize);
     initial_commit_size  = align_forward_u64(initial_commit_size, pagesize);
 
     if (initial_commit_size > reserve_size)
@@ -1456,7 +1466,6 @@ AETHER_API Arena* arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 
     arena->granularity   = commit_page_granularity;
 
     return arena;
-
 }
 
 AETHER_API Arena* arena_alloc(u64 reserve_size)
@@ -1941,7 +1950,7 @@ AETHER_API b8 str8_eq_nocase(str8 a, str8 b)
 
 AETHER_API b8 str8_has_prefix(str8 s, str8 prefix)
 {
-    AETHER_ASSERT_(s.data      != NULL || s.size       == 0);
+    AETHER_ASSERT_(s.data      != NULL || s.size      == 0);
     AETHER_ASSERT_(prefix.data != NULL || prefix.size == 0);
 
     if (prefix.size > s.size) return false;
@@ -1970,12 +1979,12 @@ AETHER_API b8 str8_has_suffix(str8 s, str8 suffix)
 }
 
 // todo(chris): update brute-force method to use Boyer-Moore-Horspool
-AETHER_API b8 str8_find(str8 s, str8 needle, u64* pos)
+AETHER_API b8 str8_find(str8 s, str8 needle, u64* out_pos)
 {
     AETHER_ASSERT_(s.data      != NULL || s.size      == 0);
     AETHER_ASSERT_(needle.data != NULL || needle.size == 0);
 
-    if (needle.size == 0) { if (pos) *pos = 0; return true; }
+    if (needle.size == 0) { if (out_pos) *out_pos = 0; return true; }
     if (needle.size > s.size) return false;
 
     u64 last = s.size - needle.size;
@@ -1983,17 +1992,17 @@ AETHER_API b8 str8_find(str8 s, str8 needle, u64* pos)
     {
         u64 j = 0;
         while (j < needle.size && s.data[i+j] == needle.data[j]) { j += 1; }
-        if (j == needle.size) { if (pos) *pos = (u64)i; return true; }
+        if (j == needle.size) { if (out_pos) *out_pos = (u64)i; return true; }
     }
     return false;
 }
 
-AETHER_API b8 str8_find_last(str8 s, str8 needle, u64* pos)
+AETHER_API b8 str8_find_last(str8 s, str8 needle, u64* out_pos)
 {
     AETHER_ASSERT_(s.data != NULL || s.size == 0);
     AETHER_ASSERT_(needle.data != NULL || needle.size == 0);
 
-    if (needle.size == 0) {if (pos) *pos = s.size; return true;}
+    if (needle.size == 0) {if (out_pos) *out_pos = s.size; return true;}
 
     b8 found = false;
     u64 base = 0;
@@ -2002,7 +2011,7 @@ AETHER_API b8 str8_find_last(str8 s, str8 needle, u64* pos)
     while (rest.size > 0 && str8_find(rest, needle, &p))
     {
         found = true;
-        if (pos) *pos  = base + p;
+        if (out_pos) *out_pos  = base + p;
 
         base += p + needle.size;
         rest = str8_skip(s, base);
@@ -2010,13 +2019,13 @@ AETHER_API b8 str8_find_last(str8 s, str8 needle, u64* pos)
     return found;
 }
 
-AETHER_API b8 str8_find_char(str8 s, u8 c, u64* pos)
+AETHER_API b8 str8_find_char(str8 s, u8 c, u64* out_pos)
 {
     AETHER_ASSERT_(s.data != NULL || s.size == 0);
 
     for (u64 i = 0; i < s.size; ++i)
     {
-        if (c == s.data[i]) { if (pos) *pos = i; return true; }
+        if (c == s.data[i]) { if (out_pos) *out_pos = i; return true; }
     }
     return false;
 }
@@ -2594,7 +2603,7 @@ AETHER_API HighResTimer high_res_timer_alloc(f64 hz)
     AETHER_ASSERT_(hz > 0);
 
     HighResTimer t = {0};
-    void* os_timer = os_create_timer();
+    void* os_timer = os_timer_create();
     if (!os_timer) { FATAL("Failed to create platform timer"); return t; }
 
     u64 default_spin = os_time_frequency() / 1000;
