@@ -283,17 +283,21 @@ static void test_prefix_suffix(void)
 {
     SECTION("str8_has_prefix / str8_has_suffix");
 
+    str8 empty = {0}; /* canonical empty: NULL data, size 0 -- distinct from STR("") */
+
     ASSERT(str8_has_prefix(STR("hello"), STR("he")));
     ASSERT(str8_has_prefix(STR("hello"), STR("hello")));
     ASSERT(!str8_has_prefix(STR("hello"), STR("el")));
     ASSERT(!str8_has_prefix(STR("he"), STR("hello"))); /* prefix longer than s */
-    ASSERT(!str8_has_prefix(STR("hello"), STR("")));   /* current semantics: empty prefix -> false */
+    ASSERT(str8_has_prefix(STR("hello"), STR("")));    /* empty prefix always matches */
+    ASSERT(str8_has_prefix(STR("hello"), empty));      /* canonical empty matches too */
 
     ASSERT(str8_has_suffix(STR("hello"), STR("lo")));
     ASSERT(str8_has_suffix(STR("hello"), STR("hello")));
     ASSERT(!str8_has_suffix(STR("hello"), STR("ll")));
     ASSERT(!str8_has_suffix(STR("lo"), STR("hello")));
-    ASSERT(!str8_has_suffix(STR("hello"), STR("")));   /* current semantics: empty suffix -> false */
+    ASSERT(str8_has_suffix(STR("hello"), STR("")));    /* empty suffix always matches */
+    ASSERT(str8_has_suffix(STR("hello"), empty));      /* canonical empty matches too */
 }
 
 static void test_find(void)

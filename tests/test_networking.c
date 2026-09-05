@@ -156,18 +156,39 @@ static void test_tcp_roundtrip(void)
 
     ASSERT(net_init());
 
-    NetAddr addr = net_addr_loopback(54345);
+    Socket listener = tcp_listen(net_addr_loopback(0), 1); /* port 0 -- OS picks an ephemeral port */
+    b8 listener_ok = socket_valid(listener);
+    ASSERT(listener_ok);
+    if (!listener_ok) { net_shutdown(); return; }
 
-    Socket listener = tcp_listen(addr, 1);
-    ASSERT(socket_valid(listener));
+    NetAddr addr = {0};
+    b8 addr_ok = socket_local_addr(listener, &addr);
+    ASSERT(addr_ok);
+    if (!addr_ok) { socket_close(&listener); net_shutdown(); return; }
 
     Socket client = tcp_connect(addr);
-    ASSERT(socket_valid(client));
+    b8 client_ok = socket_valid(client);
+    ASSERT(client_ok);
+    if (!client_ok)   /* tcp_accept below blocks until a connection arrives -- if
+                          client never connected, it would hang forever instead */
+    {
+        socket_close(&listener);
+        net_shutdown();
+        return;
+    }
 
     NetAddr peer = {0};
     Socket server = tcp_accept(listener, &peer);
-    ASSERT(socket_valid(server));
+    b8 server_ok = socket_valid(server);
+    ASSERT(server_ok);
     ASSERT(peer.ip[0] == 127 && peer.ip[1] == 0 && peer.ip[2] == 0 && peer.ip[3] == 1);
+    if (!server_ok)
+    {
+        socket_close(&client);
+        socket_close(&listener);
+        net_shutdown();
+        return;
+    }
 
     const char* msg = "hello iris";
     u64 msg_len = (u64)strlen(msg);
@@ -176,6 +197,15 @@ static void test_tcp_roundtrip(void)
     NetResult r = tcp_send(client, msg, msg_len, &sent);
     ASSERT(r == NetResult_OK);
     ASSERT(sent == msg_len);
+    if (r != NetResult_OK)   /* tcp_recv below blocks until data arrives -- if
+                                 the send never went out, it would hang forever */
+    {
+        socket_close(&client);
+        socket_close(&server);
+        socket_close(&listener);
+        net_shutdown();
+        return;
+    }
 
     char buf[64] = {0};
     u64 got = 0;
@@ -198,20 +228,49 @@ static void test_udp_roundtrip(void)
 
     ASSERT(net_init());
 
-    NetAddr addr_a = net_addr_loopback(54346);
-    NetAddr addr_b = net_addr_loopback(54347);
+    /* port 0 -- OS picks an ephemeral port for each; resolved back below */
+    Socket sock_a = udp_open(net_addr_loopback(0));
+    b8 sock_a_ok = socket_valid(sock_a);
+    ASSERT(sock_a_ok);
 
-    Socket sock_a = udp_open(addr_a);
-    ASSERT(socket_valid(sock_a));
+    Socket sock_b = udp_open(net_addr_loopback(0));
+    b8 sock_b_ok = socket_valid(sock_b);
+    ASSERT(sock_b_ok);
 
-    Socket sock_b = udp_open(addr_b);
-    ASSERT(socket_valid(sock_b));
+    if (!sock_a_ok || !sock_b_ok)   /* udp_recv_from below blocks until a datagram
+                                        arrives -- with either socket invalid, none
+                                        ever will, so it would hang forever instead */
+    {
+        socket_close(&sock_a);
+        socket_close(&sock_b);
+        net_shutdown();
+        return;
+    }
+
+    NetAddr addr_a = {0};
+    NetAddr addr_b = {0};
+    b8 addrs_ok = socket_local_addr(sock_a, &addr_a) && socket_local_addr(sock_b, &addr_b);
+    ASSERT(addrs_ok);
+    if (!addrs_ok)
+    {
+        socket_close(&sock_a);
+        socket_close(&sock_b);
+        net_shutdown();
+        return;
+    }
 
     const char* msg = "hello udp";
     u64 msg_len = (u64)strlen(msg);
 
     NetResult r = udp_send_to(sock_a, addr_b, msg, msg_len);
     ASSERT(r == NetResult_OK);
+    if (r != NetResult_OK)   /* same hang risk: nothing to receive if the send failed */
+    {
+        socket_close(&sock_a);
+        socket_close(&sock_b);
+        net_shutdown();
+        return;
+    }
 
     char buf[64] = {0};
     u64 got = 0;
@@ -228,6 +287,57 @@ static void test_udp_roundtrip(void)
     net_shutdown();
 }
 
+/* --- socket_close race ---------------------------------------------------*/
+
+typedef struct { Socket* s; } CloseRaceCtx;
+
+static int socket_close_racer(void* arg)
+{
+    CloseRaceCtx* ctx = (CloseRaceCtx*)arg;
+    socket_close(ctx->s);
+    return 0;
+}
+
+static void test_socket_close_race(void)
+{
+    SECTION("iris: socket_close -- concurrent close on a shared Socket* is race-free");
+
+    /* socket_close claims the handle via atomic_load_acq_u64 + atomic_cas_u64
+       before closing it, so racing callers on the same Socket* (the misuse
+       case decision 11 in docs/iris-networking-design.md warns against, not
+       the documented usage pattern) should still converge on exactly one
+       real close instead of a double-close. This doesn't prove the OS-level
+       close only fired once -- there's no hook into os_socket_close from
+       here -- but it does exercise the actual race window under real OS
+       thread scheduling and pins the observable end state. */
+
+    ASSERT(net_init());
+
+    Socket s = udp_open(net_addr_loopback(0)); /* port 0 -- OS picks an ephemeral port */
+    ASSERT(socket_valid(s));
+
+    enum { RACERS = 8 };
+    CloseRaceCtx ctx = { &s };
+    Thread threads[RACERS];
+
+    for (int i = 0; i < RACERS; ++i)
+    {
+        threads[i] = thread_create(socket_close_racer, &ctx);
+        ASSERT(threads[i].handle != NULL);
+    }
+
+    for (int i = 0; i < RACERS; ++i)
+    {
+        int code = -1;
+        ASSERT(thread_join(&threads[i], &code));
+        ASSERT(code == 0);
+    }
+
+    ASSERT(!socket_valid(s)); /* zeroed exactly once regardless of interleaving */
+
+    net_shutdown();
+}
+
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"context",                       test_context},
@@ -237,6 +347,7 @@ static TestCase g_cases[] = {
     {"addr_to_cstr_and_str8",         test_addr_to_cstr_and_str8},
     {"tcp_roundtrip",                 test_tcp_roundtrip},
     {"udp_roundtrip",                 test_udp_roundtrip},
+    {"socket_close_race",             test_socket_close_race},
 };
 
 int main(int argc, char** argv)

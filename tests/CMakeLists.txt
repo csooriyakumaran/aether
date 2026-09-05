@@ -162,3 +162,24 @@ endif()
 
 add_test(NAME verify_c11   COMMAND verify_c11)
 add_test(NAME verify_cxx11 COMMAND verify_cxx11)
+
+# --- linkage-mode probes (AETHER_STATIC / AETHER_BUILD_DLL / AETHER_DLL) ---
+
+add_executable(verify_static verify_static.c)
+target_link_libraries(verify_static PRIVATE aether::aether)
+
+set(VERIFY_STATIC_CASES arena_roundtrip strings ring_buffer)
+foreach(case ${VERIFY_STATIC_CASES})
+    add_test(NAME verify_static_${case} COMMAND verify_static ${case})
+endforeach()
+
+add_library(aether_dll_probe SHARED dll_probe_lib.c)
+target_link_libraries(aether_dll_probe PRIVATE aether::aether)
+
+add_executable(dll_probe_consumer dll_probe_consumer.c)
+target_link_libraries(dll_probe_consumer PRIVATE aether::aether aether_dll_probe)
+
+set(DLL_PROBE_CASES arena_roundtrip strings ring_buffer)
+foreach(case ${DLL_PROBE_CASES})
+    add_test(NAME verify_dll_${case} COMMAND dll_probe_consumer ${case})
+endforeach()
