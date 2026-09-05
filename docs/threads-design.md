@@ -75,7 +75,7 @@ cache-line padding / Lamport index caching on the ring.
    *Open question (2026-07-13):* a `u64` handle was floated (opaque, holds
    integer `pthread_t` on glibc without pointer casts). Technically a wash vs
    `void*`; the deciding factor is consistency — every other aether OS handle
-   (`os_file_open`, `os_create_timer`) is `void*`. If `u64` handles are ever
+   (`os_file_open`, `os_timer_create`) is `void*`. If `u64` handles are ever
    adopted, adopt them library-wide (os layer included), not for `Thread`
    alone. Note `Mutex` is different regardless: `SRWLOCK` is *inline storage*
    zero-initialized in place, not a handle returned by the OS.
@@ -116,9 +116,8 @@ cache-line padding / Lamport index caching on the ring.
    (`unsigned __stdcall (*)(void*)` on Win32, `void* (*)(void*)` on
    pthreads). Each platform branch owns its own thunk adapting to the shared
    `ThreadStart_`.
-   Naming: noun-verb (`os_thread_create`, `os_semaphore_post`) — the layer
-   currently has both orderings (`os_create_timer`, `os_file_open`); noun-verb
-   groups these multi-function families.
+   Naming: noun-verb (`os_thread_create`, `os_semaphore_post`); noun-verb groups
+   these multi-function families.
 
 8. **Linkage and internal semantics** (post `AETHER_API` linkage modes):
    public functions carry `AETHER_API` on both the declaration *and* the
