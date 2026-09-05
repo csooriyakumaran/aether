@@ -502,6 +502,25 @@ static void test_overflow_guard(void)
 #endif
 }
 
+static void test_align_forward_overflow(void)
+{
+    SECTION("align_forward_u64: value near U64_MAX is rejected instead of silently wrapping");
+
+#if AETHER_ENABLE_ASSERTS
+    printf("   skipped: ASSERT() traps on overflow in this build (AETHER_ENABLE_ASSERTS=1);\n"
+           "            rebuild with NDEBUG defined to exercise the release-mode failure path.\n");
+#else
+    /* value + (align-1) would overflow u64 -- used to wrap to a small,
+       wrong result with no diagnostic; now saturates to U64_MAX instead. */
+    u64 wrapped = align_forward_u64(U64_MAX - 10, 4096);
+    ASSERT(wrapped == U64_MAX);
+
+    /* a value that doesn't overflow is unaffected */
+    u64 ok = align_forward_u64(4097, 4096);
+    ASSERT(ok == 8192);
+#endif
+}
+
 static void test_release(void)
 {
     SECTION("release: NULL is a safe no-op; a released arena is dead and must not be touched");
@@ -628,6 +647,7 @@ static TestCase g_cases[] = {
     {"debug_fill_on_clear_flag", test_debug_fill_on_clear_flag},
     {"strings",                  test_strings},
     {"overflow_guard",           test_overflow_guard},
+    {"align_forward_overflow",   test_align_forward_overflow},
     {"release",                  test_release},
     {"many_small_pushes",        test_many_small_pushes},
     {"header_survives_clear",    test_header_survives_clear},
