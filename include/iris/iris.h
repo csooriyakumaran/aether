@@ -255,8 +255,9 @@ IRIS_API str8    net_addr_to_str8(Arena* arena, NetAddr addr);
 
 typedef struct Socket { u64 handle; } Socket; /* {0} = invalid */
 
-IRIS_API b8   socket_valid(Socket s); 
+IRIS_API b8   socket_valid(Socket s);
 IRIS_API void socket_close(Socket* s); /* zeros the handle, cross-thread cancellation*/
+IRIS_API b8   socket_local_addr(Socket s, NetAddr* out); /* getsockname; resolves a bind-to-0 ephemeral port */
 
 typedef u8 NetResult;
 enum NetResult_
@@ -323,8 +324,31 @@ IRIS_API NetResult udp_recv_from(Socket s, void* buf, u64 cap, u64* out_recv, Ne
     typedef int     (WSAAPI *recv_fn)(SOCKET, char*, int, int);
     typedef int     (WSAAPI *sendto_fn)(SOCKET, const char*, int, int, const struct sockaddr*, int);
     typedef int     (WSAAPI *recvfrom_fn)(SOCKET, char*, int, int, struct sockaddr*, int*);
+    typedef int     (WSAAPI *getsockname_fn)(SOCKET, struct sockaddr*, int*);
+
+    typedef struct WS2API
+    {
+        WSAStartup_fn   WSAStartup;
+        WSACleanup_fn   WSACleanup;
+        socket_fn       socket;
+        setsockopt_fn   setsockopt;
+        bind_fn         bind;
+        listen_fn       listen;
+        closesocket_fn  closesocket;
+        htons_fn        htons;
+        ntohs_fn        ntohs;
+        accept_fn       accept;
+        connect_fn      connect;
+        send_fn         send;
+        recv_fn         recv;
+        sendto_fn       sendto;
+        recvfrom_fn     recvfrom;
+        getsockname_fn  getsockname;
+    } WS2API;
 
     global   HMODULE os_ws2_dll_ = NULL;
+    global   WS2API  os_ws2_;
+
     internal FARPROC os_ws2_sym_(const char* name)
     {
         return os_ws2_dll_ ? GetProcAddress(os_ws2_dll_, name) : NULL;
@@ -332,20 +356,18 @@ IRIS_API NetResult udp_recv_from(Socket s, void* buf, u64 cap, u64* out_recv, Ne
 
     internal SOCKADDR_IN os_addr_to_sockaddr_(NetAddr addr)
     {
-        htons_fn phtons = (htons_fn)os_ws2_sym_("htons");
         SOCKADDR_IN sa = {0};
         sa.sin_family = AF_INET;
-        sa.sin_port   = phtons ? phtons(addr.port) : 0;
+        sa.sin_port   = os_ws2_.htons(addr.port);
         memcpy(&sa.sin_addr, addr.ip, 4);
         return sa;
     }
 
     internal NetAddr os_sockaddr_to_addr_(SOCKADDR_IN sa)
     {
-        ntohs_fn pntohs = (ntohs_fn)os_ws2_sym_("ntohs");
         NetAddr addr = {0};
         memcpy(addr.ip, &sa.sin_addr, 4);
-        addr.port = pntohs ? pntohs(sa.sin_port) : 0;
+        addr.port = os_ws2_.ntohs(sa.sin_port);
         return addr;
     }
 
@@ -366,9 +388,32 @@ internal b8 os_net_init(void)
     os_ws2_dll_ = LoadLibraryExW(L"ws2_32.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!os_ws2_dll_) return false;
 
-    WSAStartup_fn wsa_startup = (WSAStartup_fn)os_ws2_sym_("WSAStartup");
+    os_ws2_.WSAStartup  = (WSAStartup_fn) os_ws2_sym_("WSAStartup");
+    os_ws2_.WSACleanup  = (WSACleanup_fn) os_ws2_sym_("WSACleanup");
+    os_ws2_.socket      = (socket_fn)     os_ws2_sym_("socket");
+    os_ws2_.setsockopt  = (setsockopt_fn) os_ws2_sym_("setsockopt");
+    os_ws2_.bind        = (bind_fn)       os_ws2_sym_("bind");
+    os_ws2_.listen      = (listen_fn)     os_ws2_sym_("listen");
+    os_ws2_.closesocket = (closesocket_fn)os_ws2_sym_("closesocket");
+    os_ws2_.htons       = (htons_fn)      os_ws2_sym_("htons");
+    os_ws2_.ntohs       = (ntohs_fn)      os_ws2_sym_("ntohs");
+    os_ws2_.accept      = (accept_fn)     os_ws2_sym_("accept");
+    os_ws2_.connect     = (connect_fn)    os_ws2_sym_("connect");
+    os_ws2_.send        = (send_fn)       os_ws2_sym_("send");
+    os_ws2_.recv        = (recv_fn)       os_ws2_sym_("recv");
+    os_ws2_.sendto      = (sendto_fn)     os_ws2_sym_("sendto");
+    os_ws2_.recvfrom    = (recvfrom_fn)   os_ws2_sym_("recvfrom");
+    os_ws2_.getsockname = (getsockname_fn)os_ws2_sym_("getsockname");
+
+    b8 ok = os_ws2_.WSAStartup  && os_ws2_.WSACleanup && os_ws2_.socket
+         && os_ws2_.setsockopt  && os_ws2_.bind       && os_ws2_.listen
+         && os_ws2_.closesocket && os_ws2_.htons      && os_ws2_.ntohs
+         && os_ws2_.accept      && os_ws2_.connect    && os_ws2_.send
+         && os_ws2_.recv        && os_ws2_.sendto     && os_ws2_.recvfrom
+         && os_ws2_.getsockname;
+
     WSADATA wsadata;
-    if (!wsa_startup || wsa_startup(MAKEWORD(2, 2), &wsadata) != 0)
+    if (!ok || os_ws2_.WSAStartup(MAKEWORD(2, 2), &wsadata) != 0)
     {
         FreeLibrary(os_ws2_dll_);
         os_ws2_dll_ = NULL;
@@ -384,46 +429,55 @@ internal void os_net_shutdown(void)
 {
 #if IRIS_OS_WINDOWS
     if (!os_ws2_dll_) return;
-    WSACleanup_fn wsa_cleanup = (WSACleanup_fn)os_ws2_sym_("WSACleanup");
-    if (wsa_cleanup) wsa_cleanup();
+    os_ws2_.WSACleanup();
     FreeLibrary(os_ws2_dll_);
     os_ws2_dll_ = NULL;
+    memset(&os_ws2_, 0, sizeof(os_ws2_));
 #endif
 }
 
 internal void os_socket_close(u64 h)
 {
 #if IRIS_OS_WINDOWS
-    closesocket_fn pclosesocket = (closesocket_fn)os_ws2_sym_("closesocket");
-    if (!pclosesocket) return;
-    pclosesocket((SOCKET)(h-1));
+    os_ws2_.closesocket((SOCKET)(h-1));
+#endif
+}
+
+internal b8 os_socket_local_addr(u64 h, NetAddr* out)
+{
+#if IRIS_OS_WINDOWS
+    if (!h) return false;
+
+    SOCKET      s       = (SOCKET)(h - 1);
+    SOCKADDR_IN sa      = {0};
+    int         addrlen = sizeof(sa);
+
+    if (os_ws2_.getsockname(s, (SOCKADDR*)&sa, &addrlen) == SOCKET_ERROR) return false;
+
+    *out = os_sockaddr_to_addr_(sa);
+    return true;
+#else // IRIS_OS_POSIX
+    #error "IRIS: OS socket local addr not implemented on this platform"
 #endif
 }
 
 internal u64 os_tcp_listen(NetAddr addr, u32 backlog)
 {
 #if IRIS_OS_WINDOWS
-    socket_fn     psocket     = (socket_fn)     os_ws2_sym_("socket");
-    setsockopt_fn psetsockopt = (setsockopt_fn) os_ws2_sym_("setsockopt");
-    bind_fn       pbind       = (bind_fn)       os_ws2_sym_("bind");
-    listen_fn     plisten     = (listen_fn)     os_ws2_sym_("listen");
-
-    if (!psocket || !psetsockopt || !pbind || !plisten) return 0;
-
-    SOCKET s = psocket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    SOCKET s = os_ws2_.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) return 0;
 
     BOOL exclusive = TRUE;
-    psetsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&exclusive, sizeof(exclusive)); 
+    (void)os_ws2_.setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&exclusive, sizeof(exclusive)); 
 
     SOCKADDR_IN sa = os_addr_to_sockaddr_(addr);
-    if (pbind(s, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR)
+    if (os_ws2_.bind(s, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR)
     {
         os_socket_close(os_socket_from_raw_(s));
         return 0;
     }
 
-    if (plisten(s, (int)backlog) == SOCKET_ERROR)
+    if (os_ws2_.listen(s, (int)backlog) == SOCKET_ERROR)
     {
         os_socket_close(os_socket_from_raw_(s));
         return 0;
@@ -440,20 +494,19 @@ internal u64 os_tcp_accept(u64 h, NetAddr* out_peer)
 #if IRIS_OS_WINDOWS
     if (!h) return 0;
 
-    accept_fn     paccept     = (accept_fn)     os_ws2_sym_("accept");
-    setsockopt_fn psetsockopt = (setsockopt_fn) os_ws2_sym_("setsockopt");
-
-    if (!paccept || !psetsockopt) return 0;
-
     SOCKET      listener = (SOCKET)(h-1);
     SOCKADDR_IN sa       = {0};
     int         addrlen  = sizeof(sa);
 
-    SOCKET s = paccept(listener, (SOCKADDR*)&sa, &addrlen);
+    SOCKET s = os_ws2_.accept(listener, (SOCKADDR*)&sa, &addrlen);
     if (s == INVALID_SOCKET) return 0;
 
     BOOL nodelay = TRUE;
-    psetsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&nodelay, sizeof(nodelay));
+    if (os_ws2_.setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&nodelay, sizeof(nodelay)) == SOCKET_ERROR)
+    {
+        os_socket_close(os_socket_from_raw_(s));
+        return 0;
+    }
 
     if (out_peer) *out_peer = os_sockaddr_to_addr_(sa);
     return os_socket_from_raw_(s);
@@ -465,24 +518,23 @@ internal u64 os_tcp_accept(u64 h, NetAddr* out_peer)
 internal u64 os_tcp_connect(NetAddr addr)
 {
 #if IRIS_OS_WINDOWS
-    socket_fn     psocket     = (socket_fn)    os_ws2_sym_("socket");
-    connect_fn    pconnect    = (connect_fn)   os_ws2_sym_("connect");
-    setsockopt_fn psetsockopt = (setsockopt_fn)os_ws2_sym_("setsockopt");
-
-    if (!psocket || !pconnect || !psetsockopt) return 0;
-
-    SOCKET s = psocket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    SOCKET s = os_ws2_.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) return 0;
 
     SOCKADDR_IN sa = os_addr_to_sockaddr_(addr);
-    if (pconnect(s, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR)
+    if (os_ws2_.connect(s, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR)
     {
         os_socket_close(os_socket_from_raw_(s));
         return 0;
     }
 
     BOOL nodelay = TRUE;
-    psetsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&nodelay, sizeof(nodelay));
+    if (os_ws2_.setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&nodelay, sizeof(nodelay)) == SOCKET_ERROR)
+    {
+        os_socket_close(os_socket_from_raw_(s));
+        return 0;
+    }
+
     return os_socket_from_raw_(s);
 #else // IRIS_OS_POSIX
     #error "IRIS: OS tcp connect not implemented on this platform"
@@ -495,13 +547,10 @@ internal NetResult os_tcp_send(u64 h, const void* data, u64 len, u64* out_sent)
     if (out_sent) *out_sent = 0;
     if (!h) return NetResult_Error;
 
-    send_fn psend = (send_fn)os_ws2_sym_("send");
-    if (!psend) return NetResult_Error;
-
     SOCKET s     = (SOCKET)(h - 1);
     int    chunk = (len > (u64)INT_MAX) ? INT_MAX : (int)len;
 
-    int sent = psend(s, (const char*)data, chunk, 0);
+    int sent = os_ws2_.send(s, (const char*)data, chunk, 0);
     if (sent == SOCKET_ERROR) return NetResult_Error;
 
     if (out_sent) *out_sent = (u64)sent;
@@ -517,13 +566,10 @@ internal NetResult os_tcp_recv(u64 h, u8* buf, u64 cap, u64* out_recv)
     if (out_recv) *out_recv = 0;
     if (!h) return NetResult_Error;
 
-    recv_fn precv = (recv_fn)os_ws2_sym_("recv");
-    if (!precv) return NetResult_Error;
-
     SOCKET s     = (SOCKET)(h - 1);
     int    chunk = (cap > (u64)INT_MAX) ? INT_MAX : (int)cap;
 
-    int got = precv(s, (char*)buf, chunk, 0);
+    int got = os_ws2_.recv(s, (char*)buf, chunk, 0);
     if (got == 0)            return NetResult_Closed;
     if (got == SOCKET_ERROR) return NetResult_Error;
 
@@ -537,15 +583,11 @@ internal NetResult os_tcp_recv(u64 h, u8* buf, u64 cap, u64* out_recv)
 internal u64 os_udp_open(NetAddr bind_addr)
 {
 #if IRIS_OS_WINDOWS
-    socket_fn psocket = (socket_fn)os_ws2_sym_("socket");
-    bind_fn   pbind   = (bind_fn)  os_ws2_sym_("bind");
-    if (!psocket || !pbind) return 0;
-
-    SOCKET s = psocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    SOCKET s = os_ws2_.socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s == INVALID_SOCKET) return 0;
 
     SOCKADDR_IN sa = os_addr_to_sockaddr_(bind_addr);
-    if (pbind(s, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR)
+    if (os_ws2_.bind(s, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR)
     {
         os_socket_close(os_socket_from_raw_(s));
         return 0;
@@ -563,13 +605,10 @@ internal NetResult os_udp_send_to(u64 h, NetAddr to, const void* data, u64 len)
     if (!h) return NetResult_Error;
     if (len > (u64)INT_MAX) return NetResult_Error; /* oversized datagram */
 
-    sendto_fn psendto = (sendto_fn)os_ws2_sym_("sendto");
-    if (!psendto) return NetResult_Error;
-
     SOCKET      s  = (SOCKET)(h - 1);
     SOCKADDR_IN sa = os_addr_to_sockaddr_(to);
 
-    int sent = psendto(s, (const char*)data, (int)len, 0, (SOCKADDR*)&sa, sizeof(sa));
+    int sent = os_ws2_.sendto(s, (const char*)data, (int)len, 0, (SOCKADDR*)&sa, sizeof(sa));
     if (sent == SOCKET_ERROR || (u64)sent != len) return NetResult_Error;
 
     return NetResult_OK;
@@ -584,15 +623,12 @@ internal NetResult os_udp_recv_from(u64 h, u8* buf, u64 cap, u64* out_recv, NetA
     if (out_recv) *out_recv = 0;
     if (!h) return NetResult_Error;
 
-    recvfrom_fn precvfrom = (recvfrom_fn)os_ws2_sym_("recvfrom");
-    if (!precvfrom) return NetResult_Error;
-
     SOCKET      s       = (SOCKET)(h - 1);
     int         chunk   = (cap > (u64)INT_MAX) ? INT_MAX : (int)cap;
     SOCKADDR_IN sa      = {0};
     int         addrlen = sizeof(sa);
 
-    int got = precvfrom(s, (char*)buf, chunk, 0, (SOCKADDR*)&sa, &addrlen);
+    int got = os_ws2_.recvfrom(s, (char*)buf, chunk, 0, (SOCKADDR*)&sa, &addrlen);
     if (got == SOCKET_ERROR) return NetResult_Error;
 
     if (out_from) *out_from = os_sockaddr_to_addr_(sa);
@@ -725,9 +761,18 @@ IRIS_API b8 socket_valid(Socket s)
 
 IRIS_API void socket_close(Socket* s) /* zeros the handle */
 {
-    if (!s || !s->handle) return;
-    os_socket_close(s->handle);
-    s->handle = 0;
+    if (!s) return;
+
+    u64 h = atomic_load_acq_u64(&s->handle);
+    if (!h) return;
+
+    if (!atomic_cas_u64(&s->handle, h, 0)) return; /* lost the race, someone else is closing it*/
+    os_socket_close(h);
+}
+
+IRIS_API b8 socket_local_addr(Socket s, NetAddr* out)
+{
+    return os_socket_local_addr(s.handle, out);
 }
 
 /* ------------------------------------------------------------------------- */

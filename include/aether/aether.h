@@ -1623,7 +1623,7 @@ AETHER_API view ring_buffer_peek(RingBuffer* rb, u64 len)
     return v;
 }
 
-AETHER_API b8  ring_buffer_advance_read(RingBuffer* rb, u64 len)
+AETHER_API b8 ring_buffer_advance_read(RingBuffer* rb, u64 len)
 {
     if (!rb || !rb->base) return false;
 
@@ -1878,6 +1878,8 @@ internal b8 char_is_lower(u8 c) { return ('a' <= c && c <= 'z'); }
 
 AETHER_API str8 str8_trim(str8 s)
 {
+    AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
+
     u64 start = 0;
     while (start < s.size && char_is_ws(s.data[start])) start++;
 
@@ -1889,6 +1891,8 @@ AETHER_API str8 str8_trim(str8 s)
 
 AETHER_API str8 str8_trim_left(str8 s)
 {
+    AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
+
     u64 start = 0;
     while (start < s.size && char_is_ws(s.data[start])) start++;
 
@@ -1897,6 +1901,8 @@ AETHER_API str8 str8_trim_left(str8 s)
 
 AETHER_API str8 str8_trim_right(str8 s)
 {
+    AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
+
     u64 end = s.size;
     while ( end > 0 && char_is_ws(s.data[end-1])) end--;
 
@@ -1917,6 +1923,9 @@ AETHER_API b8 str8_eq(str8 a, str8 b)
 
 AETHER_API b8 str8_eq_nocase(str8 a, str8 b)
 {
+    AETHER_ASSERT_(a.data != NULL || a.size == 0); /* NULL data with size > 0 is a caller bug */
+    AETHER_ASSERT_(b.data != NULL || b.size == 0); /* NULL data with size > 0 is a caller bug */
+
     if (a.size != b.size) return false;
 
     u8 c1, c2;
@@ -1932,9 +1941,10 @@ AETHER_API b8 str8_eq_nocase(str8 a, str8 b)
 
 AETHER_API b8 str8_has_prefix(str8 s, str8 prefix)
 {
-    if (!prefix.data || !prefix.size || !s.data || !s.size) return false;
+    AETHER_ASSERT_(s.data      != NULL || s.size       == 0);
+    AETHER_ASSERT_(prefix.data != NULL || prefix.size == 0);
 
-    if (s.size < prefix.size) return false;
+    if (prefix.size > s.size) return false;
 
     for (u64 i = 0; i < prefix.size; ++i)
         if (s.data[i] != prefix.data[i]) return false;
@@ -1944,9 +1954,10 @@ AETHER_API b8 str8_has_prefix(str8 s, str8 prefix)
 
 AETHER_API b8 str8_has_suffix(str8 s, str8 suffix)
 {
-    if (!suffix.data || !suffix.size || !s.data || !s.size) return false;
+    AETHER_ASSERT_(s.data      != NULL || s.size      == 0);
+    AETHER_ASSERT_(suffix.data != NULL || suffix.size == 0);
 
-    if (s.size < suffix.size) return false;
+    if (suffix.size > s.size) return false;
 
     u64 j = 0;
     for (u64 i = s.size - suffix.size; i < s.size; ++i)
@@ -1961,7 +1972,10 @@ AETHER_API b8 str8_has_suffix(str8 s, str8 suffix)
 // todo(chris): update brute-force method to use Boyer-Moore-Horspool
 AETHER_API b8 str8_find(str8 s, str8 needle, u64* pos)
 {
-    if (needle.size == 0) { *pos = 0; return true; }
+    AETHER_ASSERT_(s.data      != NULL || s.size      == 0);
+    AETHER_ASSERT_(needle.data != NULL || needle.size == 0);
+
+    if (needle.size == 0) { if (pos) *pos = 0; return true; }
     if (needle.size > s.size) return false;
 
     u64 last = s.size - needle.size;
@@ -1969,14 +1983,18 @@ AETHER_API b8 str8_find(str8 s, str8 needle, u64* pos)
     {
         u64 j = 0;
         while (j < needle.size && s.data[i+j] == needle.data[j]) { j += 1; }
-        if (j == needle.size) { *pos = (u64)i; return true; }
+        if (j == needle.size) { if (pos) *pos = (u64)i; return true; }
     }
     return false;
 }
 
 AETHER_API b8 str8_find_last(str8 s, str8 needle, u64* pos)
 {
-    if (needle.size == 0) {*pos = s.size; return true;}
+    AETHER_ASSERT_(s.data != NULL || s.size == 0);
+    AETHER_ASSERT_(needle.data != NULL || needle.size == 0);
+
+    if (needle.size == 0) {if (pos) *pos = s.size; return true;}
+
     b8 found = false;
     u64 base = 0;
     str8 rest = s;
@@ -1984,7 +2002,8 @@ AETHER_API b8 str8_find_last(str8 s, str8 needle, u64* pos)
     while (rest.size > 0 && str8_find(rest, needle, &p))
     {
         found = true;
-        *pos  = base + p;
+        if (pos) *pos  = base + p;
+
         base += p + needle.size;
         rest = str8_skip(s, base);
     }
@@ -1993,9 +2012,11 @@ AETHER_API b8 str8_find_last(str8 s, str8 needle, u64* pos)
 
 AETHER_API b8 str8_find_char(str8 s, u8 c, u64* pos)
 {
+    AETHER_ASSERT_(s.data != NULL || s.size == 0);
+
     for (u64 i = 0; i < s.size; ++i)
     {
-        if (c == s.data[i]) { *pos = i; return true; }
+        if (c == s.data[i]) { if (pos) *pos = i; return true; }
     }
     return false;
 }
@@ -2187,7 +2208,7 @@ AETHER_API str8 str8_replace(Arena* arena, str8 s, str8 old, str8 target)
         rest = str8_skip(rest, pos + old.size);
     }
 
-    u64 new_len = s.size + count * (i64)(target.size - old.size);
+    u64 new_len = s.size + count * ((i64)target.size - (i64)old.size);
     u8* buf     = (u8*)arena_push_or_fatal_(arena, new_len + 1, 1);
 
     u64 w = 0;
@@ -2666,8 +2687,10 @@ internal u8 days_in_month_(u32 year, u32 month)
 {
     persist const u8 days[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
     if (month == 2 && is_leap_year_(year)) return 29;
+    AETHER_ASSERT_(month <= 12);
     return days[month-1];
 }
+
 /* Hinnant Algorithm */
 internal i64 days_from_civil_(i32 y, u32 m, u32 d)
 {
