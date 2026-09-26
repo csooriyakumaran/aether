@@ -16,7 +16,8 @@
 
   Do this:
       #define AETHER_IMPLEMENTATION
-  before you include this file in *one* C or C++ file to create the implementation.
+  before you include this file in *one* C or C++ file to create the
+  implementation.
 
   // i.e.
   #include ...
@@ -30,19 +31,23 @@
   --------------
 
   - AETHER_STATIC             API functions become static (private to the TU)
-                              Requires AETHER_IMPLEMENTATION in the *same* file;
+                              Requires AETHER_IMPLEMENTATION in the *same* file
                               no other TU can use the library.
-  - AETHER_BUILD_DLL          building aether as a shared library. Define together
-                              with AETHER_IMPLEMENTATION in the DLL's TU; marks the
-                              API dllexport (visibility("default") on POSIX)
-  - AETHER_DLL                consuming aether as a shared library; marks the API
-                              dllimport. Do not define AETHER_IMPLEMENTATION.
+
+  - AETHER_BUILD_DLL          building aether as a shared library. Define
+                              together with AETHER_IMPLEMENTATION in the DLL's
+                              TU; marks the API dllexport
+                              (visibility("default")) on POSIX
+
+  - AETHER_DLL                consuming aether as a shared library; marks the
+                              API dllimport. Do not define AETHER_IMPLEMENTATION
 
   CONFIG DEFINES
   --------------
 
   - AETHER_BUILD_DEBUG=0|1    force debug/release behaviour
                               (default: 1 unless NDEBUG is defined)
+
   - AETHER_ENABLE_ASSERTS=0|1 force asserts on/off
                               (default: AETHER_BUILD_DEBUG)
 

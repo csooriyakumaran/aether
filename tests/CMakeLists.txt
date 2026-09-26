@@ -13,10 +13,14 @@ target_link_libraries(test_arena
 #     COMMAND test_arena
 # )
 
-set(ARENA_TEST_CASES array_count alloc_basic alloc_ex_custom push_alignment push_array_contiguous
-    push_macro_coverage zero_policy pop_to_and_pop temp_basic temp_nested temp_out_of_order_is_safe
-    temp_rk4_pattern clear decommit_flag commit_chunked_flag debug_fill_on_clear_flag
-    strings overflow_guard align_forward_overflow release many_small_pushes header_survives_clear first_push_at_header_floor)
+set(ARENA_TEST_CASES
+    array_count alloc_basic alloc_ex_custom push_alignment push_array_contiguous
+    push_macro_coverage zero_policy pop_to_and_pop temp_basic
+    temp_nested temp_out_of_order_is_safe temp_rk4_pattern clear decommit_flag
+    commit_chunked_flag debug_fill_on_clear_flag strings overflow_guard
+    align_forward_overflow release many_small_pushes header_survives_clear
+    first_push_at_header_floor
+)
 
 foreach(case ${ARENA_TEST_CASES})
     add_test(NAME arena_${case} COMMAND test_arena ${case})
@@ -48,7 +52,10 @@ target_link_libraries(test_files
         aether::aether
 )
 
-set(FILE_TEST_CASES write_read_roundtrip write_truncates write_failure read_missing map_roundtrip map_missing)
+set(FILE_TEST_CASES
+    write_read_roundtrip write_truncates write_failure read_missing
+    map_roundtrip map_missing
+)
 
 foreach(case ${FILE_TEST_CASES})
     add_test(NAME file_${case} COMMAND test_files ${case})
