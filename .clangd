@@ -11,3 +11,8 @@ If:
   PathMatch: .*iris\.h
 CompileFlags: 
   Add: [-DIRIS_IMPLEMENTATION]
+---
+If:
+  PathMatch: .*hermes\.h
+CompileFlags: 
+  Add: [-DHERMES_IMPLEMENTATION]
