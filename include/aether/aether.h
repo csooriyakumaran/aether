@@ -634,14 +634,17 @@ enum Str8CutFlags_
 };
 
 // --- construction --- 
-AETHER_API char*     c_str(Arena* arena, str8 s);
-AETHER_API char*     c_str_push_copy(Arena* arena, const char* src);
-AETHER_API char*     c_str_push_fmt(Arena* arena, const char* fmt, ...);
-
 AETHER_API str8      str8_push_copy(Arena* arena, str8 src);
 AETHER_API str8      str8_push_c_str(Arena* arena, const char* src);
-AETHER_API str8      str8_push_fmt(Arena* arena, const char* fmt, ...);
 AETHER_API str8      str8_concat(Arena* arena, str8 a, str8 b);
+
+AETHER_API char*     c_str(Arena* arena, str8 s);
+AETHER_API char*     c_str_push_copy(Arena* arena, const char* src);
+
+// --- formatting ---
+AETHER_API str8      str8_fmt(bytes dst, const char* fmt, ...); /* dst.size is the buffer capacity, not valid-data length */
+AETHER_API str8      str8_push_fmt(Arena* arena, const char* fmt, ...);
+AETHER_API char*     c_str_push_fmt(Arena* arena, const char* fmt, ...);
 
 // --- view / slices --- (no allocation)
 AETHER_API str8      str8_from_c_str(const char* s);
@@ -725,6 +728,24 @@ AETHER_API u64   file_write(const char* path, const void* src, u64 len);
 // Read-only view into a memory mapped file
 AETHER_API view  file_map(const char* path);
 AETHER_API void  file_unmap(view map);
+
+/* buffered direct write to open file handle */
+typedef struct FileStream
+{
+    void* handle;
+    u8*   buf;    /* caller-owned */
+    u64   len;
+    u64   cap;
+} FileStream;
+
+AETHER_API FileStream file_stream_open(const char* path, u8* buf, u64 buf_cap);
+AETHER_API b8         file_stream_valid(FileStream* fs);
+AETHER_API bytes      file_stream_reserve(FileStream* fs, u64 len);
+AETHER_API void       file_stream_commit(FileStream* fs, u64 len); 
+AETHER_API b8         file_stream_flush(FileStream* fs);
+AETHER_API b8         file_stream_close(FileStream* fs);
+AETHER_API str8       file_stream_fmt(FileStream* fs, u64 cap, const char* fmt, ...);
+
 
 /* ------- T I M E R S ----------------------------------------------------- */
 AETHER_API u64 time_mark(void);
@@ -1729,23 +1750,40 @@ internal void* arena_push_or_fatal_(Arena* arena, u64 size, u64 align)
     return p;
 }
 
-AETHER_API char* c_str(Arena* arena, str8 s)
+static inline u64 fmt_raw_(void* dst, u64 cap, const char* fmt, va_list args)
 {
-    AETHER_ASSERT_(arena != NULL);
-    AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
-
-    char* dst = (char*)arena_push_or_fatal_(arena, s.size + 1, 1);
-    if (s.size) memcpy(dst, s.data, s.size);
-    dst[s.size] = '\0';
-    return dst;
+    int n = vsnprintf((char*)dst, (size_t)cap, fmt, args);
+    return ( n < 0 ) ? 0 : (u64)n;
 }
 
-AETHER_API char* c_str_push_copy(Arena* arena, const char* src)
+static inline str8 str8_fmtv(bytes dst, const char* fmt, va_list args)
 {
-    size_t len = strlen(src);
-    char *dst = (char*)arena_push_or_fatal_(arena, (u64)len + 1, 1);
-    memcpy(dst, src, len + 1);
-    return dst;
+    AETHER_ASSERT_( dst.data != NULL || dst.size == 0);
+    u64 n = fmt_raw_(dst.data, dst.size, fmt, args);
+    str8 result;
+    result.data = dst.data;
+    result.size = (n < dst.size) ? n : (dst.size ? dst.size - 1 : 0 ); /* Note(Chris): Silently truncates! */
+    return result;
+}
+
+static inline str8 str8_push_fmtv(Arena* arena, const char* fmt, va_list args)
+{
+    va_list args_copy;
+    va_copy(args_copy, args);
+
+    u64 len = fmt_raw_(NULL, 0, fmt, args_copy);
+    va_end(args_copy);
+
+    char* dst = (char*)arena_push_or_fatal_(arena, (u64)len + 1, 1);
+
+    int written = fmt_raw_(dst, len + 1, fmt, args);
+    AETHER_ASSERT_(written == len);
+    (void)written;
+
+    str8 result;
+    result.data = (u8*)dst;
+    result.size = (u64)len; /* excludes null terminator */
+    return result;
 }
 
 static inline char* c_str_push_fmtv(Arena* arena, const char* fmt, va_list args)
@@ -1753,28 +1791,19 @@ static inline char* c_str_push_fmtv(Arena* arena, const char* fmt, va_list args)
     va_list args_copy;
     va_copy(args_copy, args);
 
-    int len = vsnprintf(NULL, 0, fmt, args_copy);
+    u64 len = fmt_raw_(NULL, 0, fmt, args_copy);
     va_end(args_copy);
-
-    AETHER_ASSERT_(len >= 0);
 
     /* use 1-byte alignment to maximum packing */
     char* dst = (char*)arena_push_or_fatal_(arena, (u64)len + 1, 1);
-    int written = vsnprintf(dst, (size_t)len + 1, fmt, args);
+    u64 written = fmt_raw_(dst, len + 1, fmt, args);
     AETHER_ASSERT_(written == len);
     (void)written;
 
     return dst;
 }
 
-AETHER_API char* c_str_push_fmt(Arena* arena, const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    char* dst = c_str_push_fmtv(arena, fmt, args);
-    va_end(args);
-    return dst;
-}
+/* ------------------------------------------------------------------------- */
 
 AETHER_API str8 str8_push_copy(Arena* arena, str8 src)
 {
@@ -1803,38 +1832,6 @@ AETHER_API str8 str8_push_c_str(Arena* arena, const char* src)
     return result;
 }
 
-static inline str8 str8_push_fmtv(Arena* arena, const char* fmt, va_list args)
-{
-    va_list args_copy;
-    va_copy(args_copy, args);
-
-    int len = vsnprintf(NULL, 0, fmt, args_copy);
-
-    va_end(args_copy);
-
-    AETHER_ASSERT_(len >= 0);
-
-    char* dst = (char*)arena_push_or_fatal_(arena, (u64)len + 1, 1);
-
-    int written = vsnprintf(dst, (size_t)len + 1, fmt, args);
-    AETHER_ASSERT_(written == len);
-    (void)written;
-
-    str8 result;
-    result.data = (u8*)dst;
-    result.size = (u64)len; /* excludes null terminator */
-    return result;
-}
-
-AETHER_API str8 str8_push_fmt(Arena* arena, const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    str8 result = str8_push_fmtv(arena, fmt, args);
-    va_end(args);
-    return result;
-}
-
 AETHER_API str8 str8_concat(Arena* arena, str8 a, str8 b)
 {
     AETHER_ASSERT_(arena != NULL);
@@ -1853,6 +1850,52 @@ AETHER_API str8 str8_concat(Arena* arena, str8 a, str8 b)
     result.size = size;
     result.data = data;
     return result;
+}
+
+AETHER_API char* c_str(Arena* arena, str8 s)
+{
+    AETHER_ASSERT_(arena != NULL);
+    AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
+
+    char* dst = (char*)arena_push_or_fatal_(arena, s.size + 1, 1);
+    if (s.size) memcpy(dst, s.data, s.size);
+    dst[s.size] = '\0';
+    return dst;
+}
+
+AETHER_API char* c_str_push_copy(Arena* arena, const char* src)
+{
+    size_t len = strlen(src);
+    char *dst = (char*)arena_push_or_fatal_(arena, (u64)len + 1, 1);
+    memcpy(dst, src, len + 1);
+    return dst;
+}
+
+AETHER_API str8 str8_fmt(bytes dst, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    str8 result = str8_fmtv(dst, fmt, args);
+    va_end(args);
+    return result;
+}
+
+AETHER_API str8 str8_push_fmt(Arena* arena, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    str8 result = str8_push_fmtv(arena, fmt, args);
+    va_end(args);
+    return result;
+}
+
+AETHER_API char* c_str_push_fmt(Arena* arena, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    char* dst = c_str_push_fmtv(arena, fmt, args);
+    va_end(args);
+    return dst;
 }
 
 AETHER_API str8 str8_from_c_str(const char* s)
@@ -2593,6 +2636,76 @@ AETHER_API void file_unmap(view v)
 {
     os_file_unmap(v.data, v.size);
 }
+
+AETHER_API FileStream file_stream_open(const char* path, u8* buf, u64 buf_cap)
+{
+    FileStream fs = {0};
+    fs.handle = os_file_open_for_write(path);
+    fs.buf = buf;
+    fs.cap = buf_cap;
+    return fs;
+}
+
+AETHER_API b8 file_stream_valid(FileStream* fs)
+{
+    return fs->handle != NULL;
+}
+
+AETHER_API bytes file_stream_reserve(FileStream* fs, u64 len)
+{ 
+    /* a single write can never need more than the stream's own buffer capacity */
+    AETHER_ASSERT_(len <= fs->cap);
+
+    bytes result = {0};
+
+    /* flush if needed -- on failed flush return {0} */
+    if (fs->len + len > fs->cap && !file_stream_flush(fs))
+        return result;
+
+    result.data = fs->buf + fs->len;
+    result.size = fs->cap - fs->len;
+    return result;
+}
+AETHER_API void file_stream_commit(FileStream* fs, u64 len)
+{
+    AETHER_ASSERT_(len <= fs->cap - fs->len);
+    fs->len += len;
+}
+
+AETHER_API b8 file_stream_flush(FileStream* fs)
+{
+    if (!fs->handle || fs->len == 0) return true;
+    b8 ok = os_file_write(fs->handle, fs->buf, fs->len);
+    if (ok) fs->len = 0;
+    return ok;
+}
+
+AETHER_API b8 file_stream_close(FileStream* fs)
+{
+
+    /* returns false to indicate final flush failure -- still closes handle */
+    b8 ok = file_stream_flush(fs);
+
+    if (fs->handle) os_file_close(fs->handle);
+    fs->handle = NULL;
+
+    return ok;
+
+}
+AETHER_API str8 file_stream_fmt(FileStream* fs, u64 cap, const char* fmt, ...)
+{
+    bytes dst = file_stream_reserve(fs, cap);
+    if (dst.size > cap) dst.size = cap; /* cap bounds this record regardless of how much slack reserve() returned */
+
+    va_list args;
+    va_start(args, fmt);
+    str8 result = str8_fmtv(dst, fmt, args);
+    va_end(args);
+
+    file_stream_commit(fs, result.size);
+    return result;
+}
+
 
 /* ------------------------------------------------------------------------- */
 /* --- T I M I N G --------------------------------------------------------- */
