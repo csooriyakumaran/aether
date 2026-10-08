@@ -333,6 +333,35 @@ static void test_stream_open_failure(void)
     ASSERT(file_stream_close(&fs));
 }
 
+static void test_stream_ok_reports_write_failure(void)
+{
+    SECTION("file_stream_ok: a failed OS write is visible after the fact, not just via flush's own return value");
+
+    const char* path = "aether_test_stream_ok.tmp";
+    u8 buf[16];
+    FileStream fs = file_stream_open(path, buf, sizeof(buf));
+    ASSERT(file_stream_valid(&fs));
+    ASSERT(file_stream_ok(&fs)); /* nothing attempted yet */
+
+    bytes dst = file_stream_reserve(&fs, 5);
+    memcpy(dst.data, "hello", 5);
+    file_stream_commit(&fs, 5);
+
+    /* close the OS handle out from under the stream to force the next write
+       to fail, the same as a device going away or a handle being revoked */
+    CloseHandle((HANDLE)fs.handle);
+
+    ASSERT(!file_stream_flush(&fs)); /* the write itself failed */
+    ASSERT(!file_stream_ok(&fs));    /* ...and file_stream_ok reflects that afterward, independent of flush's return */
+
+    /* the 5 bytes are still accounted for in the buffer -- flush never
+       discards unwritten data on failure, even though with the handle gone
+       there is no longer anywhere for them to go */
+    ASSERT(fs.len == 5);
+
+    remove(path);
+}
+
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"write_read_roundtrip", test_write_read_roundtrip},
@@ -349,6 +378,7 @@ static TestCase g_cases[] = {
     {"stream_reserve_slack",        test_stream_reserve_hands_back_full_remaining_room},
     {"stream_flush_empty_is_noop",  test_stream_flush_empty_is_noop},
     {"stream_open_failure",         test_stream_open_failure},
+    {"stream_ok_write_failure",     test_stream_ok_reports_write_failure},
 };
 
 int main(int argc, char** argv)

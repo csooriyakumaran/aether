@@ -57,7 +57,7 @@ set(FILE_TEST_CASES
     map_roundtrip map_missing
     stream_write_roundtrip stream_fmt_roundtrip stream_auto_flush_on_full
     stream_fmt_truncation stream_fmt_cap_is_ceiling stream_reserve_slack
-    stream_flush_empty_is_noop stream_open_failure
+    stream_flush_empty_is_noop stream_open_failure stream_ok_write_failure
 )
 
 foreach(case ${FILE_TEST_CASES})
