@@ -1,7 +1,7 @@
 /*---------------------------------------------------------------------------*\
   HERMES
 
-  Minimal Serial Communicaation Library for C/C++
+  Minimal Serial Communication Library for C/C++
 
   Author      : C. Sooriyakumaran
   Created     : 2026-09-26
@@ -15,9 +15,10 @@
   Low-level RS232/RS485 serial port I/O: open/close a port, send bytes,
   read bytes. Framing, encoding, and message semantics are left entirely
   to caller code -- hermes only owns the OS/hardware boundary (port config,
-  timeouts, RS485 TX/RX turnaround). todo(chris)
+  timeouts, RS485 TX/RX turnaround).
 
   Do this:
+      #define AETHER_IMPLEMENTATION
       #define HERMES_IMPLEMENTATION
   before you include this file in *one* C or C++ file to create the implementation.
 
@@ -26,6 +27,7 @@
   #include ...
   #include ...
 
+  #define AETHER_IMPLEMENTATION
   #define HERMES_IMPLEMENTATION
   #include "hermes/hermes.h"
 
@@ -253,11 +255,19 @@ enum SerialMode_
     SerialMode_RS485,     /* half duplex; serial_write drives RTS for TX/RX turnaround */
 };
 
+typedef u8 SerialTimeoutMode;
+enum SerialTimeoutMode_
+{
+    SerialTimeoutMode_Block = 0, /* wait indefinitely; timeout_ms ignored (default) */
+    SerialTimeoutMode_Timeout,   /* wait up to timeout_ms; SerialResult_Timeout if nothing arrives */
+    SerialTimeoutMode_Poll,      /* return immediately with whatever's buffered; timeout_ms ignored */
+};
+
 typedef u8 SerialStopBits;
 enum SerialStopBits_
 {
     SerialStopBits_One = 0, /* default on zero-fill */
-    SerialStopBits_OneHalf,
+    SerialStopBits_OneFive,
     SerialStopBits_Two,
 };
 
@@ -265,10 +275,12 @@ typedef struct SerialPort { u64 handle; } SerialPort; /* {0} = invalid */
 
 typedef struct SerialConfig
 {
-    u32            baud;
-    SerialParity   parity;
-    SerialStopBits stop_bits;
-    SerialMode     mode;
+    u32               baud;
+    SerialParity      parity;
+    SerialStopBits    stop_bits;
+    SerialMode        serial_mode;
+    SerialTimeoutMode timeout_mode; /* Block (default) / Timeout / Poll */
+    u32               timeout_ms;   /* only meaningful when timeout_mode == Timeout */
 } SerialConfig;
 
 HERMES_API SerialPort serial_open(str8 device, SerialConfig cfg); /* {0} on failure; device e.g. STR("COM10") */
@@ -285,7 +297,7 @@ enum SerialResult_
 
 /* Blocking, with a timeout. Partial reads/writes are normal for serial --
  * always check out_recv/out_sent, do not assume the whole buffer moved. */
-HERMES_API SerialResult serial_read(SerialPort p, void* buf, u64 cap, u32 timeout_ms, u64* out_recv);
+HERMES_API SerialResult serial_read(SerialPort p, void* buf, u64 cap, u64* out_recv);
 HERMES_API SerialResult serial_write(SerialPort p, const void* src, u64 len, u64* out_sent); /* RS485 turnaround handled internally per the port's configured mode */
 
 #if HERMES_LANG_CPP
@@ -351,10 +363,18 @@ internal u64 os_serial_port_open(str8 device, SerialConfig cfg)
         return 0;
     }
 
-    dcb.BaudRate = (DWORD)cfg.baud;
-    dcb.ByteSize = 8;
-    dcb.fBinary  = TRUE;
-    dcb.fParity  = (cfg.parity != SerialParity_None);
+    dcb.BaudRate        = (DWORD)cfg.baud;
+    dcb.ByteSize        = 8;
+    dcb.fBinary         = TRUE;
+    dcb.fOutxCtsFlow    = FALSE;
+    dcb.fOutxDsrFlow    = FALSE;
+    dcb.fDsrSensitivity = FALSE;
+    dcb.fOutX           = FALSE;
+    dcb.fInX            = FALSE;
+    dcb.fDtrControl     = DTR_CONTROL_ENABLE;   /* todo(chris): non-configurable for now */
+    dcb.fRtsControl     = (cfg.serial_mode == SerialMode_RS485) ? RTS_CONTROL_TOGGLE : RTS_CONTROL_ENABLE;
+    dcb.fParity         = (cfg.parity != SerialParity_None);
+
     switch (cfg.parity)
     {
         case SerialParity_None: dcb.Parity = NOPARITY; break;
@@ -364,13 +384,25 @@ internal u64 os_serial_port_open(str8 device, SerialConfig cfg)
     switch (cfg.stop_bits)
     {
         case SerialStopBits_One:     dcb.StopBits = ONESTOPBIT; break;
-        case SerialStopBits_OneHalf: dcb.StopBits = ONE5STOPBITS; break;
+        case SerialStopBits_OneFive: dcb.StopBits = ONE5STOPBITS; break;
         case SerialStopBits_Two:     dcb.StopBits = TWOSTOPBITS; break;
     }
 
-    if (cfg.mode == SerialMode_RS485) dcb.fRtsControl = RTS_CONTROL_TOGGLE;
-
     if (!SetCommState(h, &dcb))
+    {
+        os_serial_port_close(os_serial_handle_from_raw_(h));
+        return 0;
+    }
+
+    COMMTIMEOUTS to = {0};
+    switch(cfg.timeout_mode)
+    {
+        case SerialTimeoutMode_Block:    break;
+        case SerialTimeoutMode_Timeout:  to.ReadTotalTimeoutConstant = cfg.timeout_ms; break;
+        case SerialTimeoutMode_Poll:     to.ReadIntervalTimeout = MAXDWORD; break;
+    }
+
+    if (!SetCommTimeouts((HANDLE)(uintptr_t)h, &to))
     {
         os_serial_port_close(os_serial_handle_from_raw_(h));
         return 0;
@@ -383,13 +415,9 @@ internal u64 os_serial_port_open(str8 device, SerialConfig cfg)
 }
 
 
-internal SerialResult os_serial_read(u64 h, u8* buf, u64 cap, u32 timeout_ms, u64* out_recv)
+internal SerialResult os_serial_read(u64 h, u8* buf, u64 cap, u64* out_recv)
 {
 #if HERMES_OS_WINDOWS
-    COMMTIMEOUTS to = {0};
-    to.ReadTotalTimeoutConstant = timeout_ms; /* Multiplier and IntervalTimeout stay 0 */
-    if (!SetCommTimeouts((HANDLE)(uintptr_t)h, &to)) return SerialResult_Error;
-
     DWORD chunk = (cap > 0xFFFFFFFFu) ? 0xFFFFFFFFu : (DWORD)cap; /* ReadFile wants DWORD, cap is u64 */
     DWORD read  = 0;
     BOOL  ok    = ReadFile((HANDLE)(uintptr_t)h, buf, chunk, &read, NULL);
@@ -448,9 +476,9 @@ HERMES_API b8 serial_valid(SerialPort p)
     return p.handle != 0;
 }
 
-HERMES_API SerialResult serial_read(SerialPort p, void* buf, u64 cap, u32 timeout_ms, u64* out_recv)
+HERMES_API SerialResult serial_read(SerialPort p, void* buf, u64 cap, u64* out_recv)
 {
-    return os_serial_read(p.handle, (u8*)buf, cap, timeout_ms, out_recv);
+    return os_serial_read(p.handle, (u8*)buf, cap, out_recv);
 }
 
 HERMES_API SerialResult serial_write(SerialPort p, const void* src, u64 len, u64* out_sent)
@@ -462,8 +490,6 @@ HERMES_API SerialResult serial_write(SerialPort p, const void* src, u64 len, u64
 #if HERMES_LANG_CPP
 }
 #endif // HERMES_LANG_CPP
-
-
 
 #endif //HERMES_IMPLEMENTATION
 /*---------------------------------------------------------------------------*\
