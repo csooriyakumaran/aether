@@ -736,9 +736,11 @@ typedef struct FileStream
     u8*   buf;    /* caller-owned */
     u64   len;
     u64   cap;
+    b8    err;
 } FileStream;
 
 AETHER_API FileStream file_stream_open(const char* path, u8* buf, u64 buf_cap);
+AETHER_API b8         file_stream_ok(FileStream* fs);
 AETHER_API b8         file_stream_valid(FileStream* fs);
 AETHER_API bytes      file_stream_reserve(FileStream* fs, u64 len);
 AETHER_API void       file_stream_commit(FileStream* fs, u64 len); 
@@ -2651,6 +2653,11 @@ AETHER_API b8 file_stream_valid(FileStream* fs)
     return fs->handle != NULL;
 }
 
+AETHER_API b8 file_stream_ok(FileStream* fs)
+{
+    return !fs->err;
+}
+
 AETHER_API bytes file_stream_reserve(FileStream* fs, u64 len)
 { 
     /* a single write can never need more than the stream's own buffer capacity */
@@ -2666,6 +2673,7 @@ AETHER_API bytes file_stream_reserve(FileStream* fs, u64 len)
     result.size = fs->cap - fs->len;
     return result;
 }
+
 AETHER_API void file_stream_commit(FileStream* fs, u64 len)
 {
     AETHER_ASSERT_(len <= fs->cap - fs->len);
@@ -2675,9 +2683,9 @@ AETHER_API void file_stream_commit(FileStream* fs, u64 len)
 AETHER_API b8 file_stream_flush(FileStream* fs)
 {
     if (!fs->handle || fs->len == 0) return true;
-    b8 ok = os_file_write(fs->handle, fs->buf, fs->len);
-    if (ok) fs->len = 0;
-    return ok;
+    fs->err = !os_file_write(fs->handle, fs->buf, fs->len);
+    if (!fs->err) fs->len = 0;
+    return !fs->err;
 }
 
 AETHER_API b8 file_stream_close(FileStream* fs)
@@ -2692,9 +2700,11 @@ AETHER_API b8 file_stream_close(FileStream* fs)
     return ok;
 
 }
+
 AETHER_API str8 file_stream_fmt(FileStream* fs, u64 cap, const char* fmt, ...)
 {
     bytes dst = file_stream_reserve(fs, cap);
+    if (!dst.data) return AETHER_LITERAL(str8){0};
     if (dst.size > cap) dst.size = cap; /* cap bounds this record regardless of how much slack reserve() returned */
 
     va_list args;
@@ -2705,7 +2715,6 @@ AETHER_API str8 file_stream_fmt(FileStream* fs, u64 cap, const char* fmt, ...)
     file_stream_commit(fs, result.size);
     return result;
 }
-
 
 /* ------------------------------------------------------------------------- */
 /* --- T I M I N G --------------------------------------------------------- */
