@@ -14,18 +14,44 @@ It provides a minimal set of common primitives:
 - memory arenas (linear allocator with scratch / temporary support)
 - file I/O (read a file into an arena, write a byte span to a path)
 - memory-mapped files
-- atomics (64-bit acquire-load / release-store)
+- atomics (64-bit acquire-load / release-store / compare-and-swap)
 - threads (create/join, priority control, yield, high-resolution sleep)
 - ring / circular buffers (virtually-mirrored — reads and writes that wrap the end stay a single contiguous copy; safe across one producer and one consumer thread)
 - timing helpers
 
 The intent is not to be a framework, but rather a lightweight foundation that can be included in other libraries or applications. The motivation is to share primitives between different aerodynamic solver codes.
 
-## Requirements
+Two companion single-header modules build directly on top of aether, in the same repository: [IRIS](#iris), lightweight blocking IPv4 sockets, and [HERMES](#hermes), low-level RS232/RS485 serial I/O. Both follow aether's own conventions — the same `AETHER_IMPLEMENTATION`/`<LIB>_IMPLEMENTATION` single-header pattern, the same linkage defines (`_STATIC`/`_BUILD_DLL`/`_DLL`), and no dependencies beyond system DLLs already linked into every process.
+
+## Table of Contents
+
+- [AETHER](#aether)
+  - [AETHER Requirements](#aether-requirements)
+  - [AETHER Integration](#aether-integration)
+  - [Memory Arenas](#memory-arenas)
+  - [Use Case: Temporary File Processing](#use-case-temporary-file-processing)
+  - [File Streams](#file-streams)
+  - [Use Case: Nested Scratch Arenas in a Numerical Kernel](#use-case-nested-scratch-arenas-in-a-numerical-kernel)
+  - [Use Case: String allocations](#use-case-string-allocations)
+  - [Atomics](#atomics)
+  - [Timers](#timers)
+  - [Threads](#threads)
+  - [Console Signal](#console-signal)
+  - [Ring Buffers](#ring-buffers)
+- [IRIS](#iris)
+  - [IRIS Requirements](#iris-requirements)
+  - [IRIS Integration](#iris-integration)
+  - [Networking](#networking)
+- [HERMES](#hermes)
+  - [HERMES Requirements](#hermes-requirements)
+  - [HERMES Integration](#hermes-integration)
+  - [Serial Communication](#serial-communication)
+
+## AETHER Requirements
 
 Single-header with no link-time dependencies. Requires **C11** or **C++11** (newer standards work too; on MSVC in C mode, pass `/std:c11` or later — the default MSVC C mode predates `_Static_assert`). Currently **Windows-only** and **64-bit only** (x64 or ARM64) — both enforced at compile time with clear `#error` messages.
 
-## Integration
+## AETHER Integration
 
 aether is a single-header library in the stb style. Include it wherever it is needed; in **exactly one** C or C++ file, define `AETHER_IMPLEMENTATION` first to compile the function bodies:
 
@@ -283,6 +309,54 @@ if (file.data)
 
 A mapped view is **not** owned by any arena: `arena_pop_to` / `arena_clear` do not release it, and it must be returned explicitly with `file_unmap`. Use `file_read` when you need mutable bytes or want the data to share the arena's lifetime; use `file_map` for large read-only inputs you want to page in lazily.
 
+## File Streams
+
+For high-frequency small writes -- log lines, telemetry rows, incremental report output -- one `file_write` call per line means one OS write syscall per line. `FileStream` batches writes into a caller-owned buffer and only touches the file when that buffer fills or the stream is closed.
+
+```c
+typedef struct FileStream
+{
+    void* handle;
+    u8*   buf;    /* caller-owned */
+    u64   len;
+    u64   cap;
+} FileStream;
+```
+
+### API
+
+| FUNCTION | DESCRIPTION |
+| --- | --- |
+| `file_stream_open(path, buf, buf_cap)` | Create/truncate `path` and bind it to a caller-owned buffer. `buf` must outlive the stream. |
+| `file_stream_valid(fs)` | `false` if `open` failed to create the file -- every other call on an invalid stream stays a safe no-op rather than crashing. |
+| `file_stream_reserve(fs, len)` / `file_stream_commit(fs, len)` | Two-phase raw write. `reserve` flushes automatically if `len` bytes aren't already free, then hands back *everything* currently free in the buffer, which can be more than `len`; write into it, then `commit` the number of bytes actually used. |
+| `file_stream_fmt(fs, cap, fmt, ...)` | `printf`-style convenience over `reserve`/`commit`. Unlike `reserve`, `cap` here is a hard ceiling: the formatted result is clamped to `cap` bytes regardless of how much slack the buffer actually has, so one call can never silently consume the rest of the buffer. |
+| `file_stream_flush(fs)` / `file_stream_close(fs)` | Write the buffered bytes to disk now. Both return `b8`; a failed flush leaves the unwritten bytes in the buffer instead of discarding them. `close` flushes, then releases the OS handle regardless of whether that flush succeeded. |
+
+```c
+u8 buf[4096];
+FileStream log = file_stream_open("run.log", buf, sizeof(buf));
+if (!file_stream_valid(&log)) { /* path not writable */ }
+
+for (int step = 0; step < n_steps; step++)
+{
+    file_stream_fmt(&log, 64, "step %d: residual = %e\n", step, residual[step]);
+}
+
+if (!file_stream_close(&log))
+{
+    fprintf(stderr, "run.log: final flush failed, last buffered lines may be lost\n");
+}
+```
+
+`reserve`/`commit` without `fmt` is the lower-level escape hatch, for payloads that aren't a format string -- a binary record, or an already-built `str8`:
+
+```c
+bytes dst = file_stream_reserve(&log, record.size);
+memcpy(dst.data, record.data, record.size);
+file_stream_commit(&log, record.size);
+```
+
 ## Use Case: Nested Scratch Arenas in a Numerical Kernel
 
 `ArenaTemp` (`arena_begin_temp` / `arena_end_temp`) names the mark/pop_to pattern above, and nests cleanly: an outer computation can hold its own scratch buffers while calling inner steps that need their own short-lived ones — e.g. an RK4 time step, where the four stage-derivative buffers must outlive each individual flux evaluation.
@@ -387,14 +461,24 @@ void string_example(void)
 
 ## Atomics
 
-AETHER provides a minimal pair of 64-bit atomic operations with explicit memory ordering, `static inline` in the header:
+AETHER provides a minimal set of 64-bit atomic operations with explicit memory ordering, `static inline` in the header:
 
 ```c
-u64  atomic_load_acq_u64 (const u64* p);   /* load with acquire ordering  */
-void atomic_store_rel_u64(u64* p, u64 v);  /* store with release ordering */
+u64  atomic_load_acq_u64 (const u64* p);                       /* load with acquire ordering  */
+void atomic_store_rel_u64(u64* p, u64 v);                      /* store with release ordering */
+b8   atomic_cas_u64(u64* p, u64 expected, u64 desired);        /* compare-and-swap             */
 ```
 
 A release store makes every memory operation before it visible before the store itself; an acquire load that observes the stored value is guaranteed to also observe everything the storing thread did first. This pairing is the building block for publish/consume patterns between two threads — it is what `RingBuffer` uses internally for its single-producer/single-consumer guarantee, and it is the right tool for simple cross-thread signals (a stop flag, a mode word) where a lock would be overkill.
+
+`atomic_cas_u64` reads `*p`, and if it still equals `expected`, atomically replaces it with `desired` and returns `true`; otherwise `*p` is left untouched and it returns `false`. It's the tool for "claim this value once, whoever gets there first wins" — iris's `socket_close` and hermes's `serial_close` both use the same pattern to make handle teardown race-safe if two threads ever call close on the same shared handle:
+
+```c
+u64 h = atomic_load_acq_u64(&p->handle);
+if (!h) return;                                  /* already closed */
+if (!atomic_cas_u64(&p->handle, h, 0)) return;    /* lost the race -- someone else is closing it */
+os_close_the_handle(h);                           /* only the winner reaches this line */
+```
 
 The implementation sits on compiler intrinsics (`__iso_volatile` loads/stores plus a per-arch barrier on MSVC x64/ARM64; `__atomic` builtins on GCC/Clang), so there is no `<stdatomic.h>` / `<atomic>` dependency and the same functions compile as both C and C++. A 64-bit target is required and enforced with a compile-time assert.
 
@@ -665,11 +749,11 @@ If the message can't be completed after all (an encode error, say), `ring_buffer
 
 IRIS is a small single-header networking library. It provides blocking IPv4 socket primitives — TCP listen/accept/connect/send/recv, UDP to follow — built around one pattern: a dedicated network thread that a coordinator cancels by closing its socket, rather than a non-blocking/poll loop.
 
-## Requirements
+## IRIS Requirements
 
 Single-header, **no link-time dependencies** — `ws2_32.dll` is resolved and loaded at runtime (`LoadLibraryExW` + `GetProcAddress`, pinned by `net_init`), mirroring aether's own `VirtualAlloc2` pattern; nothing in the build links `ws2_32` directly. Requires aether. Currently **Windows-only** — non-Windows branches are labeled `#error` stubs pending the POSIX port.
 
-## Integration
+## IRIS Integration
 
 ```c
 #define AETHER_IMPLEMENTATION
@@ -747,5 +831,79 @@ udp_send_to(sock_a, addr_b, msg, strlen(msg));
 
 u8 buf[64]; u64 got = 0; NetAddr from = {0};
 udp_recv_from(sock_b, buf, sizeof(buf), &got, &from);   /* from == addr_a */
+```
+
+# HERMES
+
+***low-level RS232/RS485 serial I/O on top of aether***
+
+HERMES is a small single-header serial port library. It provides blocking open/close/read/write over a real serial link — baud/parity/stop-bit configuration and RS485 TX/RX turnaround are hermes's job; message framing and encoding are left entirely to caller code.
+
+## HERMES Requirements
+
+Single-header, **no link-time dependencies** — Requires aether. Currently **Windows-only**.
+
+## HERMES Integration
+
+```c
+#define AETHER_IMPLEMENTATION
+#define HERMES_IMPLEMENTATION
+#include "hermes/hermes.h"
+```
+
+`HERMES_STATIC` / `HERMES_BUILD_DLL` / `HERMES_DLL` mirror aether's linkage defines exactly.
+
+## Serial Communication
+
+```c
+typedef struct SerialPort { u64 handle; } SerialPort; /* {0} = invalid */
+
+typedef struct SerialConfig
+{
+    u32               baud;
+    SerialParity      parity;       /* None (default) / Even / Odd     */
+    SerialStopBits    stop_bits;    /* One (default) / OneFive / Two   */
+    SerialMode        serial_mode;  /* RS232 (default) / RS485         */
+    SerialTimeoutMode timeout_mode; /* Block (default) / Timeout / Poll */
+    u32               timeout_ms;   /* only meaningful when timeout_mode == Timeout */
+} SerialConfig;
+
+typedef u8 SerialResult;
+enum SerialResult_ { SerialResult_OK = 0, SerialResult_Timeout, SerialResult_Error };
+```
+
+### API
+
+| FUNCTION | DESCRIPTION |
+| --- | --- |
+| `serial_open(device, cfg)` | Open + configure a port, e.g. `serial_open(STR("COM10"), (SerialConfig){.baud=9600})`. `{0}` on failure. |
+| `serial_valid(p)` / `serial_close(&p)` | Check / release a port. |
+| `serial_read(p, buf, cap, &out_recv)` | Blocking behavior follows the port's configured `SerialTimeoutMode`, set once at `open`: `Block` waits for `cap` bytes indefinitely, `Timeout` waits up to `timeout_ms`, `Poll` returns immediately with whatever's already buffered. Partial reads are normal, always check `out_recv`. `SerialResult_Timeout` (not an error) if nothing arrived — including a `Poll` call that found nothing waiting. |
+| `serial_write(p, src, len, &out_sent)` | Blocking send. RS485 TX/RX turnaround is handled by the driver (`RTS_CONTROL_TOGGLE`, set once at `open`) — `serial_write` itself is identical for RS232 and RS485. |
+
+> [!NOTE]
+> Every `SerialConfig` field defaults to its most common setting at `0` — `None`/`One`/`RS232`/`Block` — so a zero-filled config beyond `baud` is already valid: `(SerialConfig){.baud = 9600}` is a complete, correct 8N1 RS232 configuration that blocks indefinitely on read until `cap` bytes arrive.
+
+A round trip with an instrument on the other end of the link:
+
+```c
+SerialConfig cfg = {.baud = 9600, .timeout_mode = SerialTimeoutMode_Timeout, .timeout_ms = 1000};
+SerialPort   dev = serial_open(STR("COM10"), cfg);
+if (!serial_valid(dev)) { /* port missing or busy */ }
+
+const char* cmd = "READ?\r\n";
+u64 sent = 0;
+serial_write(dev, cmd, strlen(cmd), &sent);
+
+char         buf[64] = {0};
+u64          got     = 0;
+SerialResult r       = serial_read(dev, buf, sizeof(buf), &got);
+if (r == SerialResult_OK && got > 0)
+{
+    /* buf[0..got) holds whatever the instrument sent back --
+       parsing/framing is entirely up to caller code */
+}
+
+serial_close(&dev);
 ```
 

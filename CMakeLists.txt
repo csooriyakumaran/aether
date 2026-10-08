@@ -30,6 +30,9 @@ add_library(aether::aether ALIAS aether)
 add_library(iris INTERFACE)
 add_library(iris::iris ALIAS iris)
 
+add_library(hermes INTERFACE)
+add_library(hermes::hermes ALIAS hermes)
+
 target_compile_features(aether INTERFACE c_std_11)
 
 configure_file(
@@ -52,6 +55,13 @@ target_include_directories(iris
         $<INSTALL_INTERFACE:include>
 )
 
+target_include_directories(hermes
+    INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
 if(AETHER_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
@@ -66,6 +76,7 @@ if (AETHER_BUILD_INSTALL)
 
     install(DIRECTORY include/aether DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
     install(DIRECTORY include/iris   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(DIRECTORY include/hermes DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/aether/aether-version.h
             DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/aether
     )
