@@ -1776,7 +1776,7 @@ static inline str8 str8_push_fmtv(Arena* arena, const char* fmt, va_list args)
 
     char* dst = (char*)arena_push_or_fatal_(arena, (u64)len + 1, 1);
 
-    int written = fmt_raw_(dst, len + 1, fmt, args);
+    u64 written = fmt_raw_(dst, len + 1, fmt, args);
     AETHER_ASSERT_(written == len);
     (void)written;
 
