@@ -320,6 +320,7 @@ typedef struct FileStream
     u8*   buf;    /* caller-owned */
     u64   len;
     u64   cap;
+    b8    err;    /* set by the most recent OS write attempt; see file_stream_ok */
 } FileStream;
 ```
 
@@ -328,7 +329,7 @@ typedef struct FileStream
 | FUNCTION | DESCRIPTION |
 | --- | --- |
 | `file_stream_open(path, buf, buf_cap)` | Create/truncate `path` and bind it to a caller-owned buffer. `buf` must outlive the stream. |
-| `file_stream_valid(fs)` | `false` if `open` failed to create the file -- every other call on an invalid stream stays a safe no-op rather than crashing. |
+| `file_stream_valid(fs)` / `file_stream_ok(fs)` | `valid` is `false` if `open` failed to create the file at all -- every other call on an invalid stream stays a safe no-op rather than crashing. `ok` is `false` if the *most recent* OS write attempt (from `flush`, `close`, or an auto-flush inside `reserve`/`fmt`) failed -- check it after a batch of writes instead of threading a `b8` through every call. |
 | `file_stream_reserve(fs, len)` / `file_stream_commit(fs, len)` | Two-phase raw write. `reserve` flushes automatically if `len` bytes aren't already free, then hands back *everything* currently free in the buffer, which can be more than `len`; write into it, then `commit` the number of bytes actually used. |
 | `file_stream_fmt(fs, cap, fmt, ...)` | `printf`-style convenience over `reserve`/`commit`. Unlike `reserve`, `cap` here is a hard ceiling: the formatted result is clamped to `cap` bytes regardless of how much slack the buffer actually has, so one call can never silently consume the rest of the buffer. |
 | `file_stream_flush(fs)` / `file_stream_close(fs)` | Write the buffered bytes to disk now. Both return `b8`; a failed flush leaves the unwritten bytes in the buffer instead of discarding them. `close` flushes, then releases the OS handle regardless of whether that flush succeeded. |
@@ -341,6 +342,11 @@ if (!file_stream_valid(&log)) { /* path not writable */ }
 for (int step = 0; step < n_steps; step++)
 {
     file_stream_fmt(&log, 64, "step %d: residual = %e\n", step, residual[step]);
+}
+
+if (!file_stream_ok(&log))
+{
+    fprintf(stderr, "run.log: a write failed mid-stream, some lines may be missing\n");
 }
 
 if (!file_stream_close(&log))
