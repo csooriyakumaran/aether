@@ -416,6 +416,44 @@ static void test_concat(void)
     arena_release(arena);
 }
 
+static void test_fmt(void)
+{
+    SECTION("str8_fmt / str8_push_fmt / c_str_push_fmt: variadic formatting");
+
+    /* str8_fmt: fixed-capacity caller buffer, no allocation */
+    u8 buf[16];
+    str8 fit = str8_fmt((bytes){buf, sizeof(buf)}, "%d-%s", 7, "ok");
+    ASSERT(str8_eq(fit, STR("7-ok")));
+
+    /* exact boundary: formatted text plus its NUL exactly fills the buffer */
+    u8 buf4[4];
+    str8 exact = str8_fmt((bytes){buf4, sizeof(buf4)}, "%s", "abc");
+    ASSERT(str8_eq(exact, STR("abc")));
+
+    /* overflow: result is clamped to what the buffer can hold (capacity - 1
+       for the NUL), never the full would-be length */
+    u8 small[4];
+    str8 trunc = str8_fmt((bytes){small, sizeof(small)}, "%s", "abcdef");
+    ASSERT(trunc.size == 3);
+    ASSERT(memcmp(trunc.data, "abc", 3) == 0);
+
+    /* zero-capacity destination: must not crash, result stays empty */
+    str8 zero = str8_fmt((bytes){0}, "%s", "x");
+    ASSERT(zero.size == 0);
+
+    /* str8_push_fmt: arena-backed, grows to fit, nul-terminated */
+    Arena* arena = arena_alloc(KB(4));
+    str8 s = str8_push_fmt(arena, "%d/%d", 3, 4);
+    ASSERT(str8_eq(s, STR("3/4")));
+    ASSERT(s.data[s.size] == '\0');
+
+    /* c_str_push_fmt: same, but returns a plain C string */
+    char* c = c_str_push_fmt(arena, "%s=%d", "x", 42);
+    ASSERT(strcmp(c, "x=42") == 0);
+
+    arena_release(arena);
+}
+
 static void test_join(void)
 {
     SECTION("str8_list_push_fmt / str8_join / str8_list_to_array");
@@ -708,6 +746,7 @@ static TestCase g_cases[] = {
     {"cut",           test_cut},
     {"cut_ex",        test_cut_ex},
     {"concat",        test_concat},
+    {"fmt",           test_fmt},
     {"join",          test_join},
     {"case_convert",  test_case_convert},
     {"replace",       test_replace},

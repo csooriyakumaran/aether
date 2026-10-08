@@ -140,6 +140,199 @@ static void test_map_missing(void)
     remove(path);
 }
 
+static void test_stream_write_roundtrip(void)
+{
+    SECTION("file_stream_open + reserve/commit/flush/close: buffered writes land on disk");
+
+    const char* path = "aether_test_stream_roundtrip.tmp";
+    u8 buf[64];
+    FileStream fs = file_stream_open(path, buf, sizeof(buf));
+    ASSERT(file_stream_valid(&fs));
+
+    bytes dst = file_stream_reserve(&fs, 5);
+    ASSERT(dst.data != NULL);
+    memcpy(dst.data, "hello", 5);
+    file_stream_commit(&fs, 5);
+
+    ASSERT(file_stream_close(&fs));
+
+    Arena* arena = arena_alloc(KB(4));
+    bytes back = file_read(arena, path);
+    ASSERT(back.size == 5);
+    ASSERT(back.data && memcmp(back.data, "hello", 5) == 0);
+    arena_release(arena);
+
+    remove(path);
+}
+
+static void test_stream_fmt_roundtrip(void)
+{
+    SECTION("file_stream_fmt: formatted text is buffered then flushed correctly");
+
+    const char* path = "aether_test_stream_fmt.tmp";
+    u8 buf[64];
+    FileStream fs = file_stream_open(path, buf, sizeof(buf));
+    ASSERT(file_stream_valid(&fs));
+
+    str8 r1 = file_stream_fmt(&fs, 32, "%s=%d\n", "x", 1);
+    ASSERT(str8_eq(r1, STR("x=1\n")));
+    str8 r2 = file_stream_fmt(&fs, 32, "%s=%d\n", "y", 2);
+    ASSERT(str8_eq(r2, STR("y=2\n")));
+
+    ASSERT(file_stream_close(&fs));
+
+    Arena* arena = arena_alloc(KB(4));
+    bytes back = file_read(arena, path);
+    ASSERT(str8_eq((str8){back.data, back.size}, STR("x=1\ny=2\n")));
+    arena_release(arena);
+
+    remove(path);
+}
+
+static void test_stream_auto_flush_on_full(void)
+{
+    SECTION("file_stream_reserve: a write that won't fit triggers an automatic flush first");
+
+    const char* path = "aether_test_stream_autoflush.tmp";
+    u8 buf[8]; /* smaller than the total payload, forces flushes mid-stream */
+    FileStream fs = file_stream_open(path, buf, sizeof(buf));
+    ASSERT(file_stream_valid(&fs));
+
+    const char* words[] = {"aaaa", "bbbb", "cccc", "dddd"};
+    for (int i = 0; i < 4; i++)
+    {
+        bytes dst = file_stream_reserve(&fs, 4);
+        ASSERT(dst.data != NULL);
+        memcpy(dst.data, words[i], 4);
+        file_stream_commit(&fs, 4);
+    }
+
+    ASSERT(file_stream_close(&fs));
+
+    Arena* arena = arena_alloc(KB(4));
+    bytes back = file_read(arena, path);
+    ASSERT(back.size == 16);
+    ASSERT(back.data && memcmp(back.data, "aaaabbbbccccdddd", 16) == 0);
+    arena_release(arena);
+
+    remove(path);
+}
+
+static void test_stream_fmt_truncation(void)
+{
+    SECTION("file_stream_fmt: output wider than the stream buffer truncates at the buffer, not silently past it");
+
+    const char* path = "aether_test_stream_trunc.tmp";
+
+    /* buffer and cap both 4: formatted text + NUL must fit in 4 bytes exactly,
+       so "abcdef" truncates to 3 chars + NUL, same boundary str8_fmt uses */
+    u8 buf[4];
+    FileStream fs = file_stream_open(path, buf, sizeof(buf));
+    ASSERT(file_stream_valid(&fs));
+
+    str8 r = file_stream_fmt(&fs, 4, "%s", "abcdef");
+    ASSERT(r.size == 3);
+    ASSERT(memcmp(r.data, "abc", 3) == 0);
+
+    ASSERT(file_stream_close(&fs));
+
+    Arena* arena = arena_alloc(KB(4));
+    bytes back = file_read(arena, path);
+    ASSERT(back.size == 3);
+    ASSERT(back.data && memcmp(back.data, "abc", 3) == 0);
+    arena_release(arena);
+
+    remove(path);
+}
+
+static void test_stream_fmt_cap_is_a_ceiling_even_with_slack(void)
+{
+    SECTION("file_stream_fmt: `cap` bounds the record even when the buffer has far more room free");
+
+    const char* path = "aether_test_stream_cap_ceiling.tmp";
+    u8 buf[64]; /* much more room than cap below asks for */
+    FileStream fs = file_stream_open(path, buf, sizeof(buf));
+    ASSERT(file_stream_valid(&fs));
+
+    /* cap=4 bounds this record to 3 chars + NUL, regardless of the 64 bytes
+       actually free in the buffer -- a short cap must not grow opportunistically */
+    str8 r = file_stream_fmt(&fs, 4, "%s", "abcdef");
+    ASSERT(r.size == 3);
+    ASSERT(memcmp(r.data, "abc", 3) == 0);
+
+    ASSERT(file_stream_close(&fs));
+
+    Arena* arena = arena_alloc(KB(4));
+    bytes back = file_read(arena, path);
+    ASSERT(back.size == 3);
+    ASSERT(back.data && memcmp(back.data, "abc", 3) == 0);
+    arena_release(arena);
+
+    remove(path);
+}
+
+static void test_stream_reserve_hands_back_full_remaining_room(void)
+{
+    SECTION("file_stream_reserve: unlike file_stream_fmt's cap, the raw primitive returns everything free, not just what was asked for");
+
+    const char* path = "aether_test_stream_reserve_slack.tmp";
+    u8 buf[64];
+    FileStream fs = file_stream_open(path, buf, sizeof(buf));
+    ASSERT(file_stream_valid(&fs));
+
+    /* asking for 4 still gets back the whole 64-byte buffer when nothing's
+       been committed yet -- callers writing a variable-length blob (not a
+       single bounded record) rely on this to use all the space available */
+    bytes dst = file_stream_reserve(&fs, 4);
+    ASSERT(dst.size == sizeof(buf));
+
+    /* after committing some, the window shrinks to what's actually left,
+       still independent of whatever `len` a later reserve call asks for */
+    file_stream_commit(&fs, 50);
+    bytes dst2 = file_stream_reserve(&fs, 4);
+    ASSERT(dst2.size == sizeof(buf) - 50);
+
+    ASSERT(file_stream_close(&fs));
+    remove(path);
+}
+
+static void test_stream_flush_empty_is_noop(void)
+{
+    SECTION("file_stream_flush: nothing buffered -> succeeds without touching the file");
+
+    const char* path = "aether_test_stream_flush_empty.tmp";
+    u8 buf[16];
+    FileStream fs = file_stream_open(path, buf, sizeof(buf));
+    ASSERT(file_stream_valid(&fs));
+
+    ASSERT(file_stream_flush(&fs)); /* len == 0: no-op success */
+    ASSERT(file_stream_close(&fs));
+
+    Arena* arena = arena_alloc(KB(4));
+    bytes back = file_read(arena, path);
+    ASSERT(back.size == 0); /* file was created (by open) but nothing was ever written */
+    arena_release(arena);
+
+    remove(path);
+}
+
+static void test_stream_open_failure(void)
+{
+    SECTION("file_stream_open: bad path leaves the stream invalid, and every call stays a safe no-op");
+
+    u8 buf[16];
+    FileStream fs = file_stream_open("aether_no_such_dir/x.tmp", buf, sizeof(buf));
+    ASSERT(!file_stream_valid(&fs));
+
+    bytes dst = file_stream_reserve(&fs, 4);
+    ASSERT(dst.data != NULL); /* buffer itself is still usable even with no backing file */
+    memcpy(dst.data, "data", 4);
+    file_stream_commit(&fs, 4);
+
+    ASSERT(file_stream_flush(&fs)); /* no handle: flush has nothing to do, reports success */
+    ASSERT(file_stream_close(&fs));
+}
+
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"write_read_roundtrip", test_write_read_roundtrip},
@@ -148,6 +341,14 @@ static TestCase g_cases[] = {
     {"read_missing",         test_read_missing},
     {"map_roundtrip",        test_map_roundtrip},
     {"map_missing",          test_map_missing},
+    {"stream_write_roundtrip",      test_stream_write_roundtrip},
+    {"stream_fmt_roundtrip",        test_stream_fmt_roundtrip},
+    {"stream_auto_flush_on_full",   test_stream_auto_flush_on_full},
+    {"stream_fmt_truncation",       test_stream_fmt_truncation},
+    {"stream_fmt_cap_is_ceiling",   test_stream_fmt_cap_is_a_ceiling_even_with_slack},
+    {"stream_reserve_slack",        test_stream_reserve_hands_back_full_remaining_room},
+    {"stream_flush_empty_is_noop",  test_stream_flush_empty_is_noop},
+    {"stream_open_failure",         test_stream_open_failure},
 };
 
 int main(int argc, char** argv)

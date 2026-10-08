@@ -36,7 +36,7 @@ target_link_libraries(test_strings
 )
 
 set(STRING_TEST_CASES eq cmp slice trim str_macro c_str split
-    skip_drop trim_lr eq_nocase prefix_suffix find cut concat join
+    skip_drop trim_lr eq_nocase prefix_suffix find cut concat fmt join
     case_convert replace parse from_c_str)
 
 foreach(case ${STRING_TEST_CASES})
@@ -55,6 +55,9 @@ target_link_libraries(test_files
 set(FILE_TEST_CASES
     write_read_roundtrip write_truncates write_failure read_missing
     map_roundtrip map_missing
+    stream_write_roundtrip stream_fmt_roundtrip stream_auto_flush_on_full
+    stream_fmt_truncation stream_fmt_cap_is_ceiling stream_reserve_slack
+    stream_flush_empty_is_noop stream_open_failure
 )
 
 foreach(case ${FILE_TEST_CASES})
@@ -105,6 +108,26 @@ set(NETWORKING_TEST_CASES context tcp_roundtrip udp_roundtrip)
 
 foreach(case ${NETWORKING_TEST_CASES})
     add_test(NAME iris_${case} COMMAND test_networking ${case})
+endforeach()
+
+add_executable(test_serial
+    test_serial.c
+)
+
+target_link_libraries(test_serial
+    PRIVATE
+        hermes::hermes
+        aether::aether
+)
+
+# handshake needs a manually-created virtual null-modem pair (com0com or
+# equivalent) -- same rationale as CONSOLE_SIGNAL_TEST_CASES' fires_on_ctrl_c
+# above: ctest can't provide that setup. Run it by hand:
+#     test_serial.exe handshake
+set(SERIAL_TEST_CASES context)
+
+foreach(case ${SERIAL_TEST_CASES})
+    add_test(NAME hermes_${case} COMMAND test_serial ${case})
 endforeach()
 
 add_executable(test_timer
