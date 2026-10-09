@@ -1752,13 +1752,13 @@ internal void* arena_push_or_fatal_(Arena* arena, u64 size, u64 align)
     return p;
 }
 
-static inline u64 fmt_raw_(void* dst, u64 cap, const char* fmt, va_list args)
+internal u64 fmt_raw_(void* dst, u64 cap, const char* fmt, va_list args)
 {
     int n = vsnprintf((char*)dst, (size_t)cap, fmt, args);
     return ( n < 0 ) ? 0 : (u64)n;
 }
 
-static inline str8 str8_fmtv(bytes dst, const char* fmt, va_list args)
+internal str8 str8_fmtv(bytes dst, const char* fmt, va_list args)
 {
     AETHER_ASSERT_( dst.data != NULL || dst.size == 0);
     u64 n = fmt_raw_(dst.data, dst.size, fmt, args);
@@ -1768,7 +1768,7 @@ static inline str8 str8_fmtv(bytes dst, const char* fmt, va_list args)
     return result;
 }
 
-static inline str8 str8_push_fmtv(Arena* arena, const char* fmt, va_list args)
+internal str8 str8_push_fmtv(Arena* arena, const char* fmt, va_list args)
 {
     va_list args_copy;
     va_copy(args_copy, args);
@@ -1788,7 +1788,7 @@ static inline str8 str8_push_fmtv(Arena* arena, const char* fmt, va_list args)
     return result;
 }
 
-static inline char* c_str_push_fmtv(Arena* arena, const char* fmt, va_list args)
+internal char* c_str_push_fmtv(Arena* arena, const char* fmt, va_list args)
 {
     va_list args_copy;
     va_copy(args_copy, args);
