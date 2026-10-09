@@ -2570,7 +2570,6 @@ AETHER_API u32 utf8_width(str8 s)
 /* --- F I L E - I / O ----------------------------------------------------- */
 /* ------------------------------------------------------------------------- */
 
-
 AETHER_API bytes  file_read(Arena* arena, const char* path)
 {
     bytes result = {0};
