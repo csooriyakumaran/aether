@@ -720,6 +720,42 @@ AETHER_API u32        utf8_width(str8 s);
 // todo(chris): do this
 
 
+/* ------- C L I - A R G U M E N T S --------------------------------------- */
+
+typedef u8 ArgKind;
+enum ArgKind_
+{
+    ArgKind_Flag = 0,
+    ArgKind_Str,
+    ArgKind_U8,
+    ArgKind_U16,
+    ArgKind_U32,
+    ArgKind_U64,
+    ArgKind_I8,
+    ArgKind_I16,
+    ArgKind_I32,
+    ArgKind_I64,
+    ArgKind_F64,
+};
+
+typedef struct ArgSpec
+{
+    str8    name;       /* "--keyword" or "DISPLAY NAME" (positional) */
+    str8    alias;      /* optional short form, e.g., "-h"; {0} for none */
+    ArgKind kind; 
+    void*   out;        /* caller-owned storage; type must match kind */
+    str8    metavar;    /* "<VALUE>" placeholder shown in help; unused for flags/positional */
+    str8    help;       /* one-line description for help text */
+    b8      positional;
+    b8      required;   /* missing required positional/option fails args_parse; unused for Flag */
+    b8      was_set;    /* written by args_parse; true if user actually passed this, vs. 'out' still holding whatever default the caller pre-filled */
+} ArgSpec;
+
+AETHER_API b8   args_has_flag(int argc, char** argv, str8 name, str8 alias); /* raw argv presence check, no ArgSpec table needed -- for a --help/--version escape hatch checked before the real parse */
+AETHER_API b8   args_parse(int argc, char** argv, ArgSpec* specs, u64 count, Arena* arena, str8* out_err);
+AETHER_API b8   args_validate(ArgSpec* specs, u64 count, Arena* arena, str8* out_err);
+AETHER_API str8 args_help_text(Arena* arena, str8 prog_name, ArgSpec* specs, u64 count);
+
 /* ------- F I L E - I / O ------------------------------------------------- */
 
 AETHER_API bytes file_read(Arena* arena, const char* path);
@@ -2564,6 +2600,361 @@ AETHER_API u32 utf8_width(str8 s)
         offset   += len;
     }
     return width;
+}
+
+/* ------------------------------------------------------------------------- */
+/* --- C L I - A R G U M E N T S ------------------------------------------- */
+/* ------------------------------------------------------------------------- */
+
+internal ArgSpec* args_find_option_(ArgSpec* spec, u64 count, str8 key)
+{
+    if (!spec) return NULL;
+
+    for (u64 i = 0; i < count; ++i)
+    {
+        if (str8_eq(spec[i].name, key)) return &spec[i];
+        if (str8_eq(spec[i].alias, key) && spec[i].alias.size) return &spec[i];
+    }
+    return NULL;
+}
+
+AETHER_API b8 args_has_flag(int argc, char** argv, str8 name, str8 alias)
+{
+    for (int i = 1; i < argc; ++i)
+    {
+        str8 arg = str8_from_c_str(argv[i]);
+        if (str8_eq(arg, name)) return true;
+        if (alias.size && str8_eq(arg, alias)) return true;
+    }
+    return false;
+}
+
+internal str8 args_defalt_metavar_(ArgKind kind)
+{
+    switch (kind)
+    {
+        case ArgKind_Str:  return STR("STRING"); 
+        case ArgKind_U8:   return STR("U8"); 
+        case ArgKind_U16:  return STR("U16"); 
+        case ArgKind_U32:  return STR("U32"); 
+        case ArgKind_U64:  return STR("U64"); 
+        case ArgKind_I8:   return STR("I8"); 
+        case ArgKind_I16:  return STR("I16"); 
+        case ArgKind_I32:  return STR("I32"); 
+        case ArgKind_I64:  return STR("I64"); 
+        case ArgKind_F64:  return STR("FLOAT"); 
+        default:           return STR("");
+    }
+}
+
+internal str8 args_usage_label_(Arena* arena, str8 name)
+{
+    return str8_replace(arena, str8_to_upper(arena, name), STR(" "), STR("-"));
+}
+
+AETHER_API b8  args_parse(int argc, char** argv, ArgSpec* specs, u64 count, Arena* arena, str8* out_err)
+{
+    u64 next_pos = 0;
+    if (out_err) *out_err = AETHER_LITERAL(str8){0};
+
+    for (int i = 1; i < argc; ++i)
+    {
+
+        str8 arg = str8_from_c_str(argv[i]);
+        str8 val = {0};
+        ArgSpec* spec = NULL;
+
+        if (arg.size == 0 || arg.data[0] != '-')
+        { /* positional: match the Nth positional-marked ArgSpec entry, in table order */
+            for (u64 k = 0, seen = 0; k < count; ++k)
+            {
+                if (!specs[k].positional) continue;
+                if (seen == next_pos) { spec = &specs[k]; break; }
+                ++seen;
+            }
+
+            if (!spec)
+            {
+                if (arena && out_err) *out_err = str8_push_fmt(arena, "unrecognized positional argument: " STR8_FMT, STR8_ARG(arg));
+                return false;
+            }
+
+            val = arg; /* positional arguments are their own value */
+            ++next_pos;
+        } else { /* keyword: --name / --name=value, matched by name or alias */
+            str8 key, inline_val;
+            b8 has_inline = str8_cut(arg, STR("="), &key, &inline_val);
+
+            spec = args_find_option_(specs, count, key);
+            if (!spec)
+            {
+                if (arena && out_err) *out_err = str8_push_fmt(arena, "unrecognized option: " STR8_FMT, STR8_ARG(key));
+                return false;
+            }
+
+            if (spec->kind != ArgKind_Flag)
+            {
+                if (has_inline) val = inline_val;
+                else if (i + 1 < argc) val = str8_from_c_str(argv[++i]);
+                else { if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " requires a value", STR8_ARG(spec->name)); return false; }
+            }
+        }
+
+        switch (spec->kind)
+        {
+            case ArgKind_Flag: *(b8*)spec->out   = true; break;
+            case ArgKind_Str:  *(str8*)spec->out = val;  break;
+            case ArgKind_U8:
+            {
+                u8 v;
+                if (!str8_to_u8(val, &v))
+                {
+                    if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " value must be a valid u8 (i.e [0, %llu]), passed " STR8_FMT, STR8_ARG(spec->name), (unsigned long long)AETHER_U8_MAX_, STR8_ARG(val));
+                    return false;
+                }
+                *(u8*)spec->out = v;
+            } break;
+            case ArgKind_U16:
+            {
+                u16 v;
+                if (!str8_to_u16(val, &v))
+                {
+                    if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " value must be a valid u16 (i.e [0, %llu]), passed " STR8_FMT, STR8_ARG(spec->name), (unsigned long long)AETHER_U16_MAX_, STR8_ARG(val));
+                    return false;
+                }
+                *(u16*)spec->out = v;
+            } break;
+            case ArgKind_U32:
+            {
+                u32 v;
+                if (!str8_to_u32(val, &v))
+                {
+                    if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " value must be a valid u32 (i.e [0, %llu]), passed " STR8_FMT, STR8_ARG(spec->name), (unsigned long long)AETHER_U32_MAX_, STR8_ARG(val));
+                    return false;
+                }
+                *(u32*)spec->out = v;
+            } break;
+            case ArgKind_U64:
+            {
+                u64 v;
+                if (!str8_to_u64(val, &v))
+                {
+                    if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " value must be a valid u64 (i.e [0, %llu]), passed " STR8_FMT, STR8_ARG(spec->name), (unsigned long long)AETHER_U64_MAX_, STR8_ARG(val));
+                    return false;
+                }
+                *(u64*)spec->out = v;
+            } break;
+            case ArgKind_I8:
+            {
+                i8 v;
+                if (!str8_to_i8(val, &v))
+                {
+                    if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " value must be a valid i8 (i.e [%lld, %lld]), passed " STR8_FMT, STR8_ARG(spec->name), (long long)AETHER_I8_MIN_, (long long)AETHER_I8_MAX_, STR8_ARG(val));
+                    return false;
+                }
+                *(i8*)spec->out = v;
+            } break;
+            case ArgKind_I16:
+            {
+                i16 v;
+                if (!str8_to_i16(val, &v))
+                {
+                    if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " value must be a valid i16 (i.e [%lld, %lld]), passed " STR8_FMT, STR8_ARG(spec->name), (long long)AETHER_I16_MIN_, (long long)AETHER_I16_MAX_, STR8_ARG(val));
+                    return false;
+                }
+                *(i16*)spec->out = v;
+            } break;
+            case ArgKind_I32:
+            {
+                i32 v;
+                if (!str8_to_i32(val, &v))
+                {
+                    if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " value must be a valid i32 (i.e [%lld, %lld]), passed " STR8_FMT, STR8_ARG(spec->name), (long long)AETHER_I32_MIN_, (long long)AETHER_I32_MAX_, STR8_ARG(val));
+                    return false;
+                }
+                *(i32*)spec->out = v;
+            } break;
+            case ArgKind_I64:
+            {
+                i64 v;
+                if (!str8_to_i64(val, &v))
+                {
+                    if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " value must be a valid i64 (i.e [%lld, %lld]), passed " STR8_FMT, STR8_ARG(spec->name), (long long)AETHER_I64_MIN_, (long long)AETHER_I64_MAX_, STR8_ARG(val));
+                    return false;
+                }
+                *(i64*)spec->out = v;
+            } break;
+            case ArgKind_F64:
+            {
+                f64 v;
+                if (!str8_to_f64(val, &v))
+                {
+                    if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " value must be a valid float, passed " STR8_FMT, STR8_ARG(spec->name), STR8_ARG(val));
+                    return false;
+                }
+                *(f64*)spec->out = v;
+            } break;
+            default:
+            {
+                if (arena && out_err) *out_err = str8_push_fmt(arena, "unknown option kind");
+                return false;
+            }
+        }
+        spec->was_set = true;
+    }
+    /* check that all required arguments were set */
+    for (u64 k = 0; k < count; ++k)
+    {
+        if (specs[k].required && !specs[k].was_set)
+        {
+            if (arena && out_err) *out_err = str8_push_fmt(arena, "missing required argument: " STR8_FMT, STR8_ARG(specs[k].name));
+            return false;
+        }
+    }
+    return true;
+}
+
+AETHER_API b8 args_validate(ArgSpec* specs, u64 count, Arena* arena, str8* out_err)
+{
+    if (out_err) *out_err = AETHER_LITERAL(str8){0};
+
+    b8 seen_optional_positional = false;
+
+    for (u64 i = 0; i < count; ++i)
+    {
+        ArgSpec* a = &specs[i];
+
+        if (a->kind > ArgKind_F64)
+        {
+            if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT ": unknown argument ArgKind", STR8_ARG(a->name));
+            return false;
+        }
+
+        if (!a->out)
+        {
+            if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT ": argument out pointer is NULL", STR8_ARG(a->name));
+            return false;
+        }
+
+        if (a->positional)
+        {
+            if (!a->required) seen_optional_positional = true;
+            else if (seen_optional_positional)
+            {
+                if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT ": required positional argument follows an optional one", STR8_ARG(a->name));
+                return false;
+            }
+        }
+
+        for (u64 j = i + 1; j < count; ++j)
+        {
+            ArgSpec* b = &specs[j];
+
+            if (str8_eq(a->name, b->name))
+            {
+                if (arena && out_err) *out_err = str8_push_fmt(arena, "duplicate argument name: " STR8_FMT, STR8_ARG(a->name));
+                return false;
+            }
+            if (a->alias.size && str8_eq(a->alias, b->alias))
+            {
+                if (arena && out_err) *out_err = str8_push_fmt(arena, "duplicate argument alias: " STR8_FMT, STR8_ARG(a->alias));
+                return false;
+            }
+            if (a->alias.size && str8_eq(a->alias, b->name))
+            {
+                if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT ": argument alias collides with another entry's name", STR8_ARG(a->alias));
+                return false;
+            }
+            if (b->alias.size && str8_eq(a->name, b->alias))
+            {
+                if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT ": argument name collides with another entry's alias", STR8_ARG(a->name));
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+AETHER_API str8 args_help_text(Arena* arena, str8 prog_name, ArgSpec* specs, u64 count)
+{
+    Str8List usage = {0};
+    str8_list_push(arena, &usage, prog_name);
+
+    for (u64 i = 0; i < count; ++i)
+    {
+
+        const ArgSpec* s = &specs[i];
+        if (s->positional)
+        {
+            str8 label = args_usage_label_(arena, s->name);
+            if (s->required) str8_list_push_fmt(arena, &usage, "<"  STR8_FMT ">",  STR8_ARG(label));
+            else             str8_list_push_fmt(arena, &usage, "[<" STR8_FMT ">]", STR8_ARG(label));
+
+        }
+        else if (s->kind == ArgKind_Flag)
+        {
+            /* required is meaningless for Flag -- always optional in the synopsis */
+            str8_list_push_fmt(arena, &usage, "[" STR8_FMT "]", STR8_ARG(s->name));
+        }
+        else
+        {
+            str8 metavar = s->metavar.size ? s->metavar : args_defalt_metavar_(s->kind);
+            if (s->required) str8_list_push_fmt(arena, &usage,    STR8_FMT "=<" STR8_FMT ">",  STR8_ARG(s->name), STR8_ARG(metavar));
+            else             str8_list_push_fmt(arena, &usage,"[" STR8_FMT "=<" STR8_FMT ">]", STR8_ARG(s->name), STR8_ARG(metavar));
+
+        }
+
+    }
+
+    Str8List lines = {0};
+    str8_list_push(arena, &lines, STR("USAGE"));
+    str8_list_push(arena, &lines, STR("-----")); /* blank line */
+    str8_list_push_fmt(arena, &lines, " " STR8_FMT, STR8_ARG(str8_join(arena, &usage, STR(" "))));
+
+    str8_list_push(arena, &lines, STR("")); /* blank line */
+    str8_list_push(arena, &lines, STR("POSITONAL ARGUMENTS"));
+    str8_list_push(arena, &lines, STR("-------------------"));
+    for (u64 i = 0; i < count; ++i)
+    {
+        const ArgSpec* s = &specs[i];
+        if (!s->positional) continue;
+        str8_list_push_fmt( arena, &lines,
+                           "  %llu: " STR8_FMT "\t" STR8_FMT "%s",
+                           (unsigned long long)i, STR8_ARG(s->name), STR8_ARG(s->help), s->required ? " (required)" : "");
+    }
+    
+    str8_list_push(arena, &lines, STR("")); /* blank line */
+    str8_list_push(arena, &lines, STR("FLAGS"));
+    str8_list_push(arena, &lines, STR("-----")); 
+    for (u64 i = 0; i < count; ++i)
+    {
+        const ArgSpec* s = &specs[i];
+        if (s->positional || s->kind != ArgKind_Flag) continue;
+        if (s->alias.size > 0)
+            str8_list_push_fmt(arena, &lines, " " STR8_FMT ", " STR8_FMT "\t\t" STR8_FMT, STR8_ARG(s->alias), STR8_ARG(s->name), STR8_ARG(s->help));
+        else
+            str8_list_push_fmt(arena, &lines, "       " STR8_FMT "\t\t" STR8_FMT, STR8_ARG(s->name), STR8_ARG(s->help));
+
+
+
+    }
+    str8_list_push(arena, &lines, STR("")); /* blank line */
+    str8_list_push(arena, &lines, STR("OPTIONS"));
+    str8_list_push(arena, &lines, STR("-------")); 
+    for (u64 i = 0; i < count; ++i)
+    {
+        const ArgSpec* s = &specs[i];
+        if (s->positional || s->kind == ArgKind_Flag) continue;
+        str8 metavar = s->metavar.size ? s->metavar : args_defalt_metavar_(s->kind);
+        str8 req     = s->required ? STR(" (required)") : STR("");
+
+        if (s->alias.size) str8_list_push_fmt(arena, &lines, " " STR8_FMT ", " STR8_FMT " <" STR8_FMT ">\t" STR8_FMT STR8_FMT, 
+                                              STR8_ARG(s->alias), STR8_ARG(s->name), STR8_ARG(metavar), STR8_ARG(s->help), STR8_ARG(req));
+        else               str8_list_push_fmt(arena, &lines, "     " STR8_FMT " <" STR8_FMT ">\t" STR8_FMT STR8_FMT, 
+                                              STR8_ARG(s->name), STR8_ARG(metavar), STR8_ARG(s->help), STR8_ARG(req));
+    }
+
+    return str8_join(arena, &lines, STR("\n"));
 }
 
 /* ------------------------------------------------------------------------- */
