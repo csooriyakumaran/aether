@@ -2629,7 +2629,7 @@ AETHER_API b8 args_has_flag(int argc, char** argv, str8 name, str8 alias)
     return false;
 }
 
-internal str8 args_defalt_metavar_(ArgKind kind)
+internal str8 args_default_metavar_(ArgKind kind)
 {
     switch (kind)
     {
@@ -2882,14 +2882,12 @@ AETHER_API str8 args_help_text(Arena* arena, str8 prog_name, ArgSpec* specs, u64
 
     for (u64 i = 0; i < count; ++i)
     {
-
         const ArgSpec* s = &specs[i];
         if (s->positional)
         {
             str8 label = args_usage_label_(arena, s->name);
             if (s->required) str8_list_push_fmt(arena, &usage, "<"  STR8_FMT ">",  STR8_ARG(label));
             else             str8_list_push_fmt(arena, &usage, "[<" STR8_FMT ">]", STR8_ARG(label));
-
         }
         else if (s->kind == ArgKind_Flag)
         {
@@ -2898,32 +2896,30 @@ AETHER_API str8 args_help_text(Arena* arena, str8 prog_name, ArgSpec* specs, u64
         }
         else
         {
-            str8 metavar = s->metavar.size ? s->metavar : args_defalt_metavar_(s->kind);
+            str8 metavar = s->metavar.size ? s->metavar : args_default_metavar_(s->kind);
             if (s->required) str8_list_push_fmt(arena, &usage,    STR8_FMT "=<" STR8_FMT ">",  STR8_ARG(s->name), STR8_ARG(metavar));
             else             str8_list_push_fmt(arena, &usage,"[" STR8_FMT "=<" STR8_FMT ">]", STR8_ARG(s->name), STR8_ARG(metavar));
-
         }
-
     }
 
     Str8List lines = {0};
     str8_list_push(arena, &lines, STR("USAGE"));
-    str8_list_push(arena, &lines, STR("-----")); /* blank line */
+    str8_list_push(arena, &lines, STR("-----"));
     str8_list_push_fmt(arena, &lines, " " STR8_FMT, STR8_ARG(str8_join(arena, &usage, STR(" "))));
 
-    str8_list_push(arena, &lines, STR("")); /* blank line */
-    str8_list_push(arena, &lines, STR("POSITONAL ARGUMENTS"));
-    str8_list_push(arena, &lines, STR("-------------------"));
+    str8_list_push(arena, &lines, STR(""));
+    str8_list_push(arena, &lines, STR("POSITIONAL ARGUMENTS"));
+    str8_list_push(arena, &lines, STR("--------------------"));
     for (u64 i = 0; i < count; ++i)
     {
         const ArgSpec* s = &specs[i];
         if (!s->positional) continue;
         str8_list_push_fmt( arena, &lines,
-                           "  %llu: " STR8_FMT "\t" STR8_FMT "%s",
-                           (unsigned long long)i, STR8_ARG(s->name), STR8_ARG(s->help), s->required ? " (required)" : "");
+                           " " STR8_FMT "\t" STR8_FMT "%s",
+                           STR8_ARG(s->name), STR8_ARG(s->help), s->required ? " (required)" : "");
     }
     
-    str8_list_push(arena, &lines, STR("")); /* blank line */
+    str8_list_push(arena, &lines, STR(""));
     str8_list_push(arena, &lines, STR("FLAGS"));
     str8_list_push(arena, &lines, STR("-----")); 
     for (u64 i = 0; i < count; ++i)
@@ -2933,19 +2929,17 @@ AETHER_API str8 args_help_text(Arena* arena, str8 prog_name, ArgSpec* specs, u64
         if (s->alias.size > 0)
             str8_list_push_fmt(arena, &lines, " " STR8_FMT ", " STR8_FMT "\t\t" STR8_FMT, STR8_ARG(s->alias), STR8_ARG(s->name), STR8_ARG(s->help));
         else
-            str8_list_push_fmt(arena, &lines, "       " STR8_FMT "\t\t" STR8_FMT, STR8_ARG(s->name), STR8_ARG(s->help));
-
-
-
+            str8_list_push_fmt(arena, &lines, "     " STR8_FMT "\t\t" STR8_FMT, STR8_ARG(s->name), STR8_ARG(s->help));
     }
-    str8_list_push(arena, &lines, STR("")); /* blank line */
+
+    str8_list_push(arena, &lines, STR(""));
     str8_list_push(arena, &lines, STR("OPTIONS"));
     str8_list_push(arena, &lines, STR("-------")); 
     for (u64 i = 0; i < count; ++i)
     {
         const ArgSpec* s = &specs[i];
         if (s->positional || s->kind == ArgKind_Flag) continue;
-        str8 metavar = s->metavar.size ? s->metavar : args_defalt_metavar_(s->kind);
+        str8 metavar = s->metavar.size ? s->metavar : args_default_metavar_(s->kind);
         str8 req     = s->required ? STR(" (required)") : STR("");
 
         if (s->alias.size) str8_list_push_fmt(arena, &lines, " " STR8_FMT ", " STR8_FMT " <" STR8_FMT ">\t" STR8_FMT STR8_FMT, 
