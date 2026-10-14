@@ -43,6 +43,28 @@ foreach(case ${STRING_TEST_CASES})
     add_test(NAME str8_${case} COMMAND test_strings ${case})
 endforeach()
 
+add_executable(test_args
+    test_args.c
+)
+
+target_link_libraries(test_args
+    PRIVATE
+        aether::aether
+)
+
+set(ARGS_TEST_CASES
+    flag_str_positional alias_and_inline_value numeric_roundtrip
+    numeric_zero_is_valid numeric_rejects_bad_value unrecognized_option
+    missing_value_for_option unexpected_positional required_positional
+    required_keyword was_set_tracking err_out_cleared_on_success
+    has_flag_prescan validate_duplicate_name validate_null_out_and_bad_kind
+    validate_optional_before_required_positional
+)
+
+foreach(case ${ARGS_TEST_CASES})
+    add_test(NAME args_${case} COMMAND test_args ${case})
+endforeach()
+
 add_executable(test_files
     test_files.c
 )
