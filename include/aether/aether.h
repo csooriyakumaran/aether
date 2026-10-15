@@ -752,6 +752,7 @@ typedef struct ArgSpec
 } ArgSpec;
 
 AETHER_API b8   args_has_flag(int argc, char** argv, str8 name, str8 alias); /* raw argv presence check, no ArgSpec table needed -- for a --help/--version escape hatch checked before the real parse */
+AETHER_API b8   args_has_option(int argc, char** argv, str8 name, str8 alias, str8* out_val); /* raw argv presence + value check, no ArgSpec table needed */
 AETHER_API b8   args_parse(int argc, char** argv, ArgSpec* specs, u64 count, Arena* arena, str8* out_err);
 AETHER_API b8   args_validate(ArgSpec* specs, u64 count, Arena* arena, str8* out_err);
 AETHER_API str8 args_help_text(Arena* arena, str8 prog_name, ArgSpec* specs, u64 count);
@@ -2618,17 +2619,6 @@ internal ArgSpec* args_find_option_(ArgSpec* spec, u64 count, str8 key)
     return NULL;
 }
 
-AETHER_API b8 args_has_flag(int argc, char** argv, str8 name, str8 alias)
-{
-    for (int i = 1; i < argc; ++i)
-    {
-        str8 arg = str8_from_c_str(argv[i]);
-        if (str8_eq(arg, name)) return true;
-        if (alias.size && str8_eq(arg, alias)) return true;
-    }
-    return false;
-}
-
 internal str8 args_default_metavar_(ArgKind kind)
 {
     switch (kind)
@@ -2652,7 +2642,46 @@ internal str8 args_usage_label_(Arena* arena, str8 name)
     return str8_replace(arena, str8_to_upper(arena, name), STR(" "), STR("-"));
 }
 
-AETHER_API b8  args_parse(int argc, char** argv, ArgSpec* specs, u64 count, Arena* arena, str8* out_err)
+AETHER_API b8 args_has_flag(int argc, char** argv, str8 name, str8 alias)
+{
+    for (int i = 1; i < argc; ++i)
+    {
+        str8 arg = str8_from_c_str(argv[i]);
+        if (str8_eq(arg, name)) return true;
+        if (alias.size && str8_eq(arg, alias)) return true;
+    }
+    return false;
+}
+
+AETHER_API b8 args_has_option(int argc, char** argv, str8 name, str8 alias, str8* out_val)
+{
+    for (int i = 1; i < argc; ++i)
+    {
+        str8 arg = str8_from_c_str(argv[i]);
+
+        str8 key, inline_val;
+        b8 has_inline = str8_cut(arg, STR("="), &key, &inline_val) && inline_val.size > 0;
+        b8 matched    = str8_eq(key, name) || ( alias.size && str8_eq(key, alias) );
+
+        if (!matched) continue;
+
+        str8 val = {0};
+        if (has_inline)        val = inline_val;
+        else if (i + 1 < argc) val = str8_from_c_str(argv[i+1]);
+
+        /* an empty "--name=" falls through to the next token same as if there were
+           no "=" at all -- a real shell already splits an unquoted "--name= value"
+           into exactly these two argv elements, so this is the realistic typo case.
+           whitespace-only still isn't usable, whichever path produced it. */
+        if (str8_trim(val).size == 0) return false;
+
+        if (out_val) *out_val = val; /* raw, not trimmed -- str8_to_* already rejects leading whitespace */
+        return true;
+    }
+    return false; /* no match */
+}
+
+AETHER_API b8 args_parse(int argc, char** argv, ArgSpec* specs, u64 count, Arena* arena, str8* out_err)
 {
     u64 next_pos = 0;
     if (out_err) *out_err = AETHER_LITERAL(str8){0};
@@ -2683,7 +2712,10 @@ AETHER_API b8  args_parse(int argc, char** argv, ArgSpec* specs, u64 count, Aren
             ++next_pos;
         } else { /* keyword: --name / --name=value, matched by name or alias */
             str8 key, inline_val;
-            b8 has_inline = str8_cut(arg, STR("="), &key, &inline_val);
+            /* an empty "--name=" is treated the same as no "=" at all, falling through to
+               the next argv element -- a real shell already splits an unquoted "--name= value"
+               typo into exactly these two elements, so this is the realistic case, not an edge one */
+            b8 has_inline = str8_cut(arg, STR("="), &key, &inline_val) && inline_val.size > 0;
 
             spec = args_find_option_(specs, count, key);
             if (!spec)

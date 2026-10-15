@@ -2,7 +2,7 @@
 
 ***the underlying medium from which all else emerges ..***
 
-AETHER is a small single-header core library for personal c/c++ projects. 
+AETHER is a small single-header core library for personal c/c++ projects.
 
 It provides a minimal set of common primitives:
 
@@ -33,6 +33,7 @@ Two companion single-header modules build directly on top of aether, in the same
   - [File Streams](#file-streams)
   - [Use Case: Nested Scratch Arenas in a Numerical Kernel](#use-case-nested-scratch-arenas-in-a-numerical-kernel)
   - [Use Case: String allocations](#use-case-string-allocations)
+  - [CLI Arguments](#cli-arguments)
   - [Atomics](#atomics)
   - [Timers](#timers)
   - [Threads](#threads)
@@ -73,9 +74,9 @@ Conflicting combinations fail at compile time. See the header preamble for the c
 
 ## Memory Arenas
 
-AETHER provides a simple linear arena allocator. 
+AETHER provides a simple linear arena allocator.
 
-An arena reserves a block of virtual address space and commits memory as needed. Allocations are performed by bumping a position pointer forward. Individual allocations are not freed; instead, memory is reclaimed in bulk by popping, clearing, or releasing the arena. 
+An arena reserves a block of virtual address space and commits memory as needed. Allocations are performed by bumping a position pointer forward. Individual allocations are not freed; instead, memory is reclaimed in bulk by popping, clearing, or releasing the arena.
 
 > [!NOTE]
 > Reservation and commit failures (e.g. out of memory) are treated as fatal and abort the program immediately — there is no recoverable error path. Arena-allocating string functions treat arena exhaustion the same way; `arena_push` itself returns `NULL` on overflow for callers that can recover.
@@ -126,7 +127,7 @@ Allocations are handed out at `(u8*)arena + pos`. `pos` starts at the 128-byte h
 
 ### Arena Flags
 
-`ArenaFlags` is currently stored as a `u8`. This allows up to 8 independent flags. The type can be widened later if needed. 
+`ArenaFlags` is currently stored as a `u8`. This allows up to 8 independent flags. The type can be widened later if needed.
 
 | FLAG                          | BIT SET  | DESCRIPTION                                                                 |
 | --------------------------    | -------- | --------------------------------------------------------------------------- |
@@ -155,7 +156,7 @@ For finer control:
 ```c
 u64 initial_commit_size = KB(4);  /* initially commit 4 KB of memory (values below one page round up to a page) */
 u32 commit_page_granularity = 64; /* every time we need to commit more memory, commit in chunks of 64 pages */
-ArenaFlags flags = 
+ArenaFlags flags =
     ArenaFlags_Decommit |         /* when popping/clearing, decommit unused pages */
     ArenaFlags_CommitChunked |    /* when allocating requires more memory, commit the number of pages defined above */
     ArenaFlags_DebugFillOnClear;  /* when popping/clearing, fill any remaining committed memory with 0xDD */
@@ -199,7 +200,7 @@ f64* array_zeroed = arena_push_array_zero(arena, f64, 1024);
 u8* bytes = arena_push_array_nozero(arena, u8, 256);
 ```
 
-> [!NOTE] 
+> [!NOTE]
 >  Note that newly committed pages may still be zeroed by the operating system
 
 ### Lifetime Model
@@ -462,6 +463,81 @@ void string_example(void)
     /* When done with these strings, clear or pop the arena */
     arena_clear(arena);   /* or arena_pop_to(arena, mark) if you saved a mark */
     arena_release(arena); /* release the reserved region back to the OS */
+}
+```
+
+## CLI Arguments
+
+A flat `ArgSpec[]` table drives parsing of both positional and `--name`/`-alias` keyword arguments -- `--name=value` and `--name value` are both accepted. One entry per argument, each pointing at caller-owned storage:
+
+```c
+typedef struct ArgSpec
+{
+    str8    name;       /* "--keyword" or "DISPLAY NAME" (positional) */
+    str8    alias;      /* optional short form, e.g. "-h"; {0} for none */
+    ArgKind kind;       /* Flag / Str / U8..U64 / I8..I64 / F64 */
+    void*   out;        /* caller-owned storage; type must match kind */
+    str8    metavar;    /* placeholder shown in help, e.g. "path"; {0} derives one from kind */
+    str8    help;       /* one-line description for help text */
+    b8      positional;
+    b8      required;   /* missing required positional/option fails args_parse; unused for Flag */
+    b8      was_set;    /* written by args_parse: true if the user actually passed this */
+} ArgSpec;
+```
+
+### API
+
+| FUNCTION | DESCRIPTION |
+| --- | --- |
+| `args_has_flag(argc, argv, name, alias)` | Raw `argv` presence check, no `ArgSpec` table needed. For a `--help`/`--version` escape hatch that has to win regardless of what else is wrong on the command line -- check this *before* calling `args_parse`, not instead of it. |
+| `args_has_option(argc, argv, name, alias, out_val)` | Same no-`ArgSpec` scope as `args_has_flag`, but for a value-taking option: hands back the raw `str8` value (`--name=value` or `--name value`, either syntax) instead of just a `b8`. No conversion or validation -- run your own `str8_to_*` on the result; that's the full `args_parse` tier's job. An empty or whitespace-only value is treated as not found at all. |
+| `args_parse(argc, argv, specs, count, arena, out_err)` | Parses `argv` into every `ArgSpec.out`. Returns `false` on the first unrecognized option/positional, missing value, bad value for the `ArgKind`, or missing `required` entry. `arena`/`out_err` are both optional (`NULL` skips them) -- parsing succeeds or fails independently of whether the caller wants a diagnostic string back. |
+| `args_validate(specs, count, arena, out_err)` | A *separate*, opt-in check against the `ArgSpec[]` table itself, not the parsed input -- duplicate `name`/`alias` across entries, a `NULL` `out` pointer, an out-of-range `kind`, or a required positional following an optional one (ordinal positional matching can't tell those apart at parse time). Meant to catch authoring mistakes once, e.g. from a test, not to run on every real invocation. |
+| `args_help_text(arena, prog_name, specs, count)` | Renders a full help string: a `<REQUIRED>` / `[<optional>]` / `[--flag]` / `[--name=<VALUE>]` usage synopsis, then `ARGUMENTS`/`FLAGS`/`OPTIONS` sections with `(required)` called out explicitly. |
+
+```c
+typedef struct Args { b8 help; str8 input; f64 mach; } Args;
+
+Args args = {0};
+ArgSpec opts[] = {
+    { STR("INPUT"),  {0},       ArgKind_Str,  &args.input, {0}, STR("input file"),        true, true },
+    { STR("--help"), STR("-h"), ArgKind_Flag, &args.help,  {0}, STR("show this help")},
+    { STR("--Mach"), STR("-M"), ArgKind_F64,  &args.mach,  {0}, STR("freestream Mach number (default: 0.1)")},
+};
+
+/* --help has to win even if a required argument is missing, or argv has an
+   unrelated typo on it -- check for it before the real parse */
+if (args_has_flag(argc, argv, STR("--help"), STR("-h")))
+{
+    str8 help = args_help_text(arena, STR("myprog"), opts, ARRAY_COUNT(opts));
+    fwrite(help.data, 1, help.size, stdout);
+    return 0;
+}
+
+str8 err = {0};
+if (!args_parse(argc, argv, opts, ARRAY_COUNT(opts), arena, &err))
+{
+    fprintf(stderr, STR8_FMT "\n", STR8_ARG(err));
+    return 1;
+}
+```
+
+`args_validate` is meant for a test, not the call site above -- run it once against your own `opts` table to catch a duplicate alias or a `NULL` `out` pointer before it ever reaches a real user:
+
+```c
+ASSERT(args_validate(opts, ARRAY_COUNT(opts), arena, &err));
+```
+
+For a quick tool that doesn't want an `ArgSpec[]` table at all, `args_has_flag`/`args_has_option` work directly on raw `argv`, no table or arena involved:
+
+```c
+if (args_has_flag(argc, argv, STR("--verbose"), STR("-v"))) enable_logging();
+
+str8 port_str = {0};
+u16  port     = 8080; /* default */
+if (args_has_option(argc, argv, STR("--port"), STR("-p"), &port_str))
+{
+    if (!str8_to_u16(port_str, &port)) { fprintf(stderr, "bad --port value\n"); return 1; }
 }
 ```
 
@@ -912,4 +988,3 @@ if (r == SerialResult_OK && got > 0)
 
 serial_close(&dev);
 ```
-

@@ -204,6 +204,39 @@ static void test_missing_value_for_option(void)
     ASSERT(!args_parse((int)ARRAY_COUNT(argv), argv, opts, ARRAY_COUNT(opts), NULL, NULL));
 }
 
+static void test_empty_inline_value_falls_through_to_next_token(void)
+{
+    SECTION("args_parse: an empty \"--name=\" is treated the same as no \"=\" at all, not a silent empty value");
+
+    /* "--name=" with truly nothing after it is a missing value, same as "--name" alone --
+       not a silently-accepted empty string for Str kind */
+    BasicArgs args = {0};
+    ArgSpec dangling[] = { { STR("--name"), {0}, ArgKind_Str, &args.name, STR("V"), STR("") } };
+    char* argv_dangling[] = {"prog", "--name="};
+    ASSERT(!args_parse((int)ARRAY_COUNT(argv_dangling), argv_dangling, dangling, ARRAY_COUNT(dangling), NULL, NULL));
+
+    /* the realistic shell-split typo: an unquoted "--Mach= 1.4" arrives as two argv
+       elements ("--Mach=", "1.4"), not one -- this must not hard-fail the whole parse */
+    f64 mach = 0;
+    ArgSpec numeric[] = { { STR("--Mach"), {0}, ArgKind_F64, &mach, STR("V"), STR("") } };
+    char* argv_numeric[] = {"prog", "--Mach=", "1.4"};
+    ASSERT(args_parse((int)ARRAY_COUNT(argv_numeric), argv_numeric, numeric, ARRAY_COUNT(numeric), NULL, NULL));
+    ASSERT(mach == 1.4);
+
+    /* same typo against a Str option is the dangerous case: before this was fixed, the
+       empty inline value was silently accepted and "value" was misread as an unrelated
+       positional instead of ever reaching --name */
+    BasicArgs args2 = {0};
+    ArgSpec withpos[] = {
+        { STR("INPUT"),  {0}, ArgKind_Str, &args2.input, {0},      STR(""), true },
+        { STR("--name"), {0}, ArgKind_Str, &args2.name,  STR("V"), STR("") },
+    };
+    char* argv_str[] = {"prog", "--name=", "value"};
+    ASSERT(args_parse((int)ARRAY_COUNT(argv_str), argv_str, withpos, ARRAY_COUNT(withpos), NULL, NULL));
+    ASSERT(str8_eq(args2.name, STR("value")));
+    ASSERT(args2.input.size == 0); /* "value" went to --name, not to the INPUT positional */
+}
+
 static void test_unexpected_positional(void)
 {
     SECTION("args_parse: more positional tokens than declared positional specs fails");
@@ -305,6 +338,80 @@ static void test_has_flag_prescan(void)
     ASSERT(!args_has_flag((int)ARRAY_COUNT(argv_name), argv_name, STR("--version"), (str8){0}));
 }
 
+static void test_has_option_prescan(void)
+{
+    SECTION("args_has_option: raw argv presence + value check, independent of any ArgSpec table");
+
+    str8 val = {0};
+
+    char* argv_inline[] = {"prog", "in.csv", "--port=8080"};
+    ASSERT(args_has_option((int)ARRAY_COUNT(argv_inline), argv_inline, STR("--port"), STR("-p"), &val));
+    ASSERT(str8_eq(val, STR("8080")));
+
+    val = (str8){0};
+    char* argv_separate[] = {"prog", "--port", "9090", "in.csv"};
+    ASSERT(args_has_option((int)ARRAY_COUNT(argv_separate), argv_separate, STR("--port"), STR("-p"), &val));
+    ASSERT(str8_eq(val, STR("9090")));
+
+    val = (str8){0};
+    char* argv_alias[] = {"prog", "-p", "1234"};
+    ASSERT(args_has_option((int)ARRAY_COUNT(argv_alias), argv_alias, STR("--port"), STR("-p"), &val));
+    ASSERT(str8_eq(val, STR("1234")));
+
+    /* found but with nothing to read as a value -- treated as not found, same as args_parse's
+       own "requires a value" failure, just without a diagnostic at this no-ceremony tier */
+    char* argv_dangling[] = {"prog", "--port"};
+    val = STR("untouched");
+    ASSERT(!args_has_option((int)ARRAY_COUNT(argv_dangling), argv_dangling, STR("--port"), STR("-p"), &val));
+    ASSERT(str8_eq(val, STR("untouched"))); /* out_val is only ever written on a true return */
+
+    char* argv_missing[] = {"prog", "in.csv", "--other"};
+    ASSERT(!args_has_option((int)ARRAY_COUNT(argv_missing), argv_missing, STR("--port"), STR("-p"), NULL));
+
+    /* "--port=" with truly nothing after it anywhere -- just as unusable as the
+       dangling "--port" above */
+    char* argv_empty_inline[] = {"prog", "--port="};
+    val = STR("untouched");
+    ASSERT(!args_has_option((int)ARRAY_COUNT(argv_empty_inline), argv_empty_inline, STR("--port"), STR("-p"), &val));
+    ASSERT(str8_eq(val, STR("untouched")));
+
+    /* "--port=" immediately followed by a separate token -- this is what a real shell
+       actually produces from an unquoted "--port= 8080" (the space ends the argv
+       element right there), so an empty inline value falls through to the next token
+       exactly like "no '=' at all" would, instead of giving up */
+    char* argv_empty_inline_then_value[] = {"prog", "--port=", "8080"};
+    val = (str8){0};
+    ASSERT(args_has_option((int)ARRAY_COUNT(argv_empty_inline_then_value), argv_empty_inline_then_value, STR("--port"), STR("-p"), &val));
+    ASSERT(str8_eq(val, STR("8080")));
+
+    /* a single token that is only whitespace after "=" is still unusable -- falling
+       through to the next token only happens when the inline value is truly empty,
+       not merely blank, so this does NOT pick up anything further down argv */
+    char* argv_whitespace_inline[] = {"prog", "--port= "};
+    val = STR("untouched");
+    ASSERT(!args_has_option((int)ARRAY_COUNT(argv_whitespace_inline), argv_whitespace_inline, STR("--port"), STR("-p"), &val));
+    ASSERT(str8_eq(val, STR("untouched")));
+
+    /* the embedded-space form only arises from explicit quoting ("--port= 8080" as one
+       argv element), unlike the realistic two-token typo above. args_has_option still
+       reports it found, but hands back the raw, untrimmed text, so the caller's own
+       str8_to_* conversion (which already rejects leading whitespace everywhere in this
+       header) is what ultimately rejects it, not args_has_option itself */
+    char* argv_space_before_value[] = {"prog", "--port= 8080"};
+    val = (str8){0};
+    ASSERT(args_has_option((int)ARRAY_COUNT(argv_space_before_value), argv_space_before_value, STR("--port"), STR("-p"), &val));
+    ASSERT(str8_eq(val, STR(" 8080")));
+    u16 space_port = 999;
+    ASSERT(!str8_to_u16(val, &space_port)); /* rejected downstream, not by args_has_option */
+
+    /* a real conversion built on top, matching the intended usage pattern */
+    char* argv_numeric[] = {"prog", "--port=65535"};
+    u16 port = 0;
+    ASSERT(args_has_option((int)ARRAY_COUNT(argv_numeric), argv_numeric, STR("--port"), STR("-p"), &val));
+    ASSERT(str8_to_u16(val, &port));
+    ASSERT(port == 65535);
+}
+
 static void test_validate_catches_duplicate_name(void)
 {
     SECTION("args_validate: duplicate name/alias across entries is caught");
@@ -388,12 +495,14 @@ static TestCase g_cases[] = {
     {"numeric_rejects_bad_value", test_numeric_kind_rejects_bad_value},
     {"unrecognized_option",       test_unrecognized_option},
     {"missing_value_for_option",  test_missing_value_for_option},
+    {"empty_inline_value_falls_through", test_empty_inline_value_falls_through_to_next_token},
     {"unexpected_positional",     test_unexpected_positional},
     {"required_positional",       test_required_positional_missing},
     {"required_keyword",          test_required_keyword_missing},
     {"was_set_tracking",          test_was_set_tracking},
     {"err_out_cleared_on_success", test_err_out_cleared_on_success},
     {"has_flag_prescan",               test_has_flag_prescan},
+    {"has_option_prescan",             test_has_option_prescan},
     {"validate_duplicate_name",        test_validate_catches_duplicate_name},
     {"validate_null_out_and_bad_kind", test_validate_catches_null_out_and_bad_kind},
     {"validate_optional_before_required_positional", test_validate_catches_optional_before_required_positional},
