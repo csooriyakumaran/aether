@@ -418,6 +418,10 @@ internal u64 os_serial_port_open(str8 device, SerialConfig cfg)
 internal SerialResult os_serial_read(u64 h, u8* buf, u64 cap, u64* out_recv)
 {
 #if HERMES_OS_WINDOWS
+    /* asking for zero bytes is a no-op success, not "nothing arrived in time" --
+       same distinction ring_buffer_read already draws for len == 0 */
+    if (cap == 0) { if (out_recv) *out_recv = 0; return SerialResult_OK; }
+
     DWORD chunk = (cap > 0xFFFFFFFFu) ? 0xFFFFFFFFu : (DWORD)cap; /* ReadFile wants DWORD, cap is u64 */
     DWORD read  = 0;
     BOOL  ok    = ReadFile((HANDLE)(uintptr_t)h, buf, chunk, &read, NULL);

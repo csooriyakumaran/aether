@@ -17,6 +17,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- hermes: `os_serial_read` now returns `SerialResult_OK` immediately when
+  `cap == 0`, instead of calling into `ReadFile` and mapping its
+  documented `read == 0` / `TRUE` (a legitimate zero-length no-op success)
+  to `SerialResult_Timeout`. Same bug class the project already fixed once
+  for `ring_buffer_read` in `[0.0.13]` ("conflating 'asked for nothing'
+  with 'not enough data'"), and the same early-return shape
+  (`if (cap == 0) { ...; return OK; }`) that fix used. `os_serial_write`'s
+  zero-length case was already unaffected. New manual-only
+  `zero_length_read_is_ok` case in `tests/test_serial.c`, run the same way
+  as `handshake` (needs a real null-modem pair; not wired into `ctest`) —
+  verified against this machine's com0com COM10/COM11 pair.
 - aether: `file_stream_open` now sets `fs.err = true` when the underlying
   `os_file_open_for_write` fails, instead of leaving `err` at its zero
   default. Previously `file_stream_ok()` (`return !fs->err;`) reported

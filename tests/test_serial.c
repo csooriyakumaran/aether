@@ -148,10 +148,45 @@ static void test_handshake(void)
     serial_close(&b);
 }
 
+/* Needs a real, currently-closed serial port to open (e.g. either half of the
+   same virtual null-modem pair handshake above uses) -- not registered as a
+   ctest case, same rationale as handshake. Run by hand:
+       test_serial.exe zero_length_read_is_ok
+*/
+static void test_zero_length_read_is_ok(void)
+{
+    SECTION("hermes: os_serial_read -- a zero-length read is SerialResult_OK, not Timeout");
+
+    str8 port_a = test_port_("HERMES_TEST_PORT_A", "COM10");
+
+    /* zero-fill cfg defaults to SerialTimeoutMode_Block -- cap == 0 must return
+       immediately regardless of mode, since it never reaches ReadFile at all */
+    SerialConfig cfg = {.baud = 9600};
+    SerialPort   a   = serial_open(port_a, cfg);
+
+    b8 ok = serial_valid(a);
+    ASSERT(ok);
+    if (!ok)
+    {
+        fprintf(stderr, "  (set up a virtual null-modem pair first, e.g. com0com COM10<->COM11)\n");
+        serial_close(&a);
+        return;
+    }
+
+    u8           buf[1];
+    u64          got = 123; /* sentinel -- must be overwritten with 0, not left stale */
+    SerialResult r   = serial_read(a, buf, 0, &got);
+    ASSERT(r == SerialResult_OK);
+    ASSERT(got == 0);
+
+    serial_close(&a);
+}
+
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"context",   test_context},
     {"handshake", test_handshake},
+    {"zero_length_read_is_ok", test_zero_length_read_is_ok},
 };
 
 int main(int argc, char** argv)
