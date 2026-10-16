@@ -3,7 +3,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.0.19] - 2026-10-16
 
 ### Added
 - hermes: new single-header module for low-level RS232/RS485 serial port I/O — `serial_open`/`serial_close`/`serial_valid`/`serial_read`/`serial_write`, mirroring iris's `Socket`/`NetResult` shape (`SerialPort { u64 handle; }`, `SerialResult` enum: `OK`/`Timeout`/`Error`). Deliberately stays at the OS/hardware boundary only — port configuration (`SerialConfig`: baud/parity/stop bits/`serial_mode`/`timeout_mode`/`timeout_ms`) and RS485 TX/RX turnaround are hermes's job; message framing and encoding are left entirely to caller code. `SerialParity`/`SerialStopBits`/`SerialMode`/`SerialTimeoutMode` all default to their most common setting at `0` (`None`/`One`/`RS232`/`Block`), so a config built with only `baud` set is already valid and blocks indefinitely on read until the buffer fills. Read timeout behavior is a three-state `SerialTimeoutMode` configured once at `serial_open`, not a per-call parameter on `serial_read`: `Block` (default, waits for `cap` bytes indefinitely), `Timeout` (waits up to `timeout_ms`), or `Poll` (returns immediately with whatever's already buffered, via the documented `ReadIntervalTimeout = MAXDWORD` idiom) — one `SetCommTimeouts` call at open configures the port instead of every `serial_read` re-configuring it (and silently resetting write's timeout back to "block forever" in the process, since `SetCommTimeouts` replaces the whole struct). `serial_open` also now explicitly disables every DCB flow-control field (`fOutxCtsFlow`/`fOutxDsrFlow`/`fDsrSensitivity`/`fOutX`/`fInX`) and fixes `fDtrControl` to `DTR_CONTROL_ENABLE`, instead of inheriting whatever `GetCommState` returns from leftover driver/OS state; `fRtsControl` stays mode-conditioned (`RTS_CONTROL_TOGGLE` for RS485, `RTS_CONTROL_ENABLE` for RS232). RS485 turnaround is handled by the driver via that same `fRtsControl` toggle, set once at `serial_open`, so `serial_write` needs no mode-specific branching. Unlike iris, there is no `serial_init`/`serial_shutdown` — the Win32 serial calls (`CreateFile`, `ReadFile`, `WriteFile`, `SetCommState`, ...) live in `kernel32.dll`, already linked into every process, so there's no Winsock-style runtime DLL load to pin. Windows-only for now, same as iris. Ships with a CMake `hermes::hermes` INTERFACE target and a `.clangd` entry mirroring iris's, plus `tests/test_serial.c`: a context-detection case wired into ctest (`hermes_context`) and a manual two-port loopback `handshake` case that needs a virtual null-modem pair (e.g. com0com) — same rationale as `fires_on_ctrl_c`, not run automatically.
@@ -13,245 +13,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - aether: CLI argument parsing — `ArgSpec`/`ArgKind`, `args_parse`, `args_validate`, `args_has_flag`, `args_help_text`. A flat `ArgSpec[]` table drives parsing of positional and `--name`/`-alias` keyword options (`--name=value` and `--name value` both accepted), covering `Flag`, `Str`, and every integer/float kind the existing `str8_to_*` family already supports (`U8`/`U16`/`U32`/`U64`, `I8`/`I16`/`I32`/`I64`, `F64`). An empty `--name=` is treated the same as no `=` at all, falling through to the next `argv` element rather than being accepted as an explicit empty value — matches what a real shell already produces from an unquoted `--name= value` typo (the space ends that `argv` element right there), instead of either hard-failing the whole parse for a numeric kind or silently misreading the real value as an unrelated positional for a `Str` one. Each entry carries `required` (checked once after the full `argv` pass, so one missing argument can't mask another behind it) and `was_set` (written by `args_parse`; distinguishes "the user explicitly passed this" from "`out` still holds whatever default the caller pre-filled it with" — needed since `0` is a legitimate value for every numeric kind, not an implicit "unset" sentinel). Error detail is opt-in and arena-owned rather than a fixed buffer or global state: `args_parse(..., Arena* arena, str8* out_err)`, both nullable, matching the header's existing `out`/`out_*` convention — the arena is touched only on a failure path, and `*out_err` is always reset to `{0}` at the start of a call so stale text from a previous call can't leak through on a later success. `args_validate(specs, count, arena, out_err)` is a separate, opt-in check against the `ArgSpec[]` table itself rather than any parsed input — duplicate `name`/`alias` across entries, a `NULL` `out` pointer, an out-of-range `kind`, or a required positional following an optional one (ordinal positional matching can't tell those apart at parse time) — meant to catch authoring mistakes once, not to run on every real invocation. `args_has_flag(argc, argv, name, alias)` is a raw `argv` presence check with no `ArgSpec` dependency, for a `--help`/`--version` escape hatch that has to win regardless of what else is wrong on the command line — checked before the real `args_parse` call, not folded into it. `args_has_option(argc, argv, name, alias, out_val)` is its value-bearing sibling, same no-`ArgSpec` scope, but hands back the raw `str8` value instead of just a `b8` — no `ArgKind`-style conversion or validation, that's what `args_parse` is for; the caller runs their own `str8_to_*` on the result. An empty or whitespace-only value (`--name=`, `--name= `) is treated the same as `--name` with nothing after it at all — not found; an empty `--name=` specifically still falls through to check the next `argv` element rather than giving up the moment it sees the `=`, since that's exactly what a real shell already produces from an unquoted `--name= value` typo (the space ends the token right there). `args_help_text(arena, prog_name, specs, count)` renders a docopt-style usage synopsis (`<REQUIRED>` / `[<optional>]` / `[--flag]` / `[--name=<VALUE>]`, placeholders derived from the option's `ArgKind` and upper-cased unless the caller overrides `metavar`) followed by `ARGUMENTS`/`FLAGS`/`OPTIONS` sections, with `(required)` called out explicitly in the detailed listing.
 
 ### Changed
-- aether: cosmetic/structural cleanup, no behavior change. Unified the
-  declaration region's three banner styles onto one convention, and
-  every banner in the file — declaration and implementation regions
-  alike, titled and plain-divider — is now a consistent 79 characters
-  wide (the file's actual pre-existing dominant width; two plain
-  dividers and all twelve declaration-region title banners were 80,
-  one character over). Fixed banner-text drift between declaration and
-  implementation
-  (`RING/BUFFERS`→`RING/CIRCULAR-BUFFERS`, `TIMING`→`TIMERS`,
-  `CONSOLE-SIGNALS`→`CONSOLE-SIGNAL-HANDLING`, including a missing
-  trailing space before `*/`); reordered three implementations to match
-  their declaration order (`str8_to_int`/typed-wrapper family,
-  `file_stream_ok`/`file_stream_valid`, `datetime_now`); applied the
-  trailing-underscore internal-helper convention to 11 non-compliant
-  functions (`round_up_power_2`, `align_forward_u64`,
-  `arena_commit_page_or_chunk`, `arena_decommit_tail`, `str8_fmtv`,
-  `str8_push_fmtv`, `c_str_push_fmtv`, `str8_list_push_fmtv`,
-  `char_is_ws`, `char_is_upper`, `char_is_lower` — all gained a trailing
-  `_`, with every call site updated, including `tests/test_arenas.c`'s
-  direct call to `align_forward_u64`); removed two duplicate, already-
-  answered `//todo(chris)` comments (with a "feild" typo) sitting above
-  `ThreadPriority`/`ProcessPriorityClass`; fixed `file_unmap`'s
-  declaration/definition parameter name mismatch (`map` vs `v`); fixed
-  `str8_from_view`'s double-space typo; removed a dead `// --- paths
-  ---` stub with nothing under it.
-- docs: `docs/cereal-design.md` is cross-linked to `hermes.h` as its
-  shipped form — its R1/R2/R3/R5/R6/R7 requirements map directly onto
-  `hermes.h`'s shape (the pre-rename design doc for what became `hermes`,
-  never updated to say so). R4 (a three-way `Timeout`/`Disconnected`/`Error`
-  result split, each handled differently by a caller) shipped simplified
-  to `hermes.h`'s actual two-way `Timeout`/`Error` `SerialResult` —
-  documented at decision 4 as a deliberate, accepted simplification
-  rather than an oversight, not a header change: reliably distinguishing
-  "device unplugged" needs Windows error-code detection that was never
-  implemented, and the design doc's own validation plan for that case
-  requires physically unplugging hardware, not something an automated
-  test can exercise either way.
-- docs: `docs/console-signal.md`'s status line no longer says "designed,
-  not yet implemented" — console-signal shipped in `[0.0.14]`, fully
-  implemented with a dedicated passing test file; this header had been
-  wrong for several releases. `docs/threads-design.md`'s status line is
-  similarly corrected, but precisely: `Thread` shipped in `[0.0.13]` and
-  is fully implemented, while `Semaphore`/`Mutex` — also covered by that
-  same design doc — are genuinely still unimplemented (per `TODO.md`'s
-  threading roadmap item), so the new status line says exactly that
-  instead of overclaiming the whole doc as "implemented."
-- docs: README's IRIS intro no longer says "UDP to follow" — UDP shipped
-  in `[0.0.14]` and the same document already shows a complete working
-  UDP example a few sections down; self-contradictory within one file.
-  Filled in README API-table/struct-sample gaps: `net_addr_parse_hostport`,
-  `net_addr_to_cstr`/`net_addr_to_str8`, `socket_local_addr` (IRIS table);
-  `thread_set_affinity` and `process_set_priority_class` (Threads table);
-  `arena_pop` (previously name-dropped once in prose but never explained
-  alongside its `arena_pop_to` sibling); `HighResTimer.wake_time`/`.lateness`
-  (struct sample — the prior review had only caught one of the two
-  missing fields).
-- docs: README's HERMES examples no longer use a C99 compound literal
-  (`serial_open(STR("COM10"), (SerialConfig){.baud=9600})`) or bare
-  designated-initializer aggregate init (`SerialConfig cfg = {.baud = ...}`)
-  — neither is legal standard C++ before C++20, and `hermes.h` is
-  explicitly dual C/C++; the project already has a hard rule against
-  exactly this pattern (compound literals were specifically removed from
-  `aether.h` itself in `[0.0.9]` so the header passes
-  `tests/verify_cxx11.cpp`'s pedantic probe). Rewritten using the
-  zero-init-then-assign idiom (`SerialConfig cfg = {0}; cfg.baud = 9600;`)
-  already used everywhere else in both headers' own code — three spots
-  fixed: the API-table example, the `SerialConfig`-defaults `NOTE`, and
-  the full round-trip code block (that last one used the designated-
-  initializer form without a compound-literal cast, same underlying
-  non-conformance, not originally called out by line number in
-  `docs/v0.0.19-review-findings.md` but the same fix either way).
-- iris: `net_addr_to_cstr`'s declaration now spells the second parameter
-  `char* buf` to match its definition — the only declaration/definition
-  spelling mismatch in any of the three headers. The function's bare
-  `u32`-length, `snprintf`-style return (unlike every other `iris.h`
-  function's explicit `b8`/`NetResult` channel) is a deliberate,
-  considered choice to keep: it already safely `NUL`-terminates and
-  truncates (see the existing `addr_to_cstr_and_str8` case in
-  `tests/test_networking.c`), and a caller detects truncation the same
-  way any `snprintf` caller does — `len >= buf_size`.
-- hermes: `serial_close`'s doc comment no longer claims the same
-  cross-thread cancellation safety as `socket_close` — `os_serial_port_open`
-  opens with plain `CreateFileA` (no `FILE_FLAG_OVERLAPPED`), and Windows
-  doesn't document `CloseHandle` as safely unblocking a pending synchronous
-  `ReadFile`/`WriteFile` on another thread the way `closesocket` is
-  documented to unblock a pending `recv`/`send`. The doc now states only
-  what's actually guaranteed (the CAS makes concurrent `serial_close`
-  calls on the same port safe) and flags the rest as untested. `serial_read`
-  and `serial_write`'s previously-shared "blocking, with a timeout" doc
-  comment is split: only `serial_read` honors `cfg.timeout_mode`;
-  `serial_write` always blocks indefinitely regardless of it (already the
-  intentional, shipped behavior — see `[Unreleased]`'s hermes entry above —
-  this is a doc-only change, no code moved), called out as specifically
-  hazardous for RS485, which has no flow control of its own to interrupt a
-  stalled write.
-- aether: `args_has_option` and `args_parse`'s keyword branch now share
-  one private helper (`args_split_inline_value_`) for splitting
-  `--name=value` on the first `=` and deciding whether an inline value is
-  actually present, instead of duplicating the exact same
-  `str8_cut`-based check in both places. No behavior change — the
-  API-level split between the two functions (raw presence/value check vs.
-  table-driven parse) is unaffected; only the shared mechanical step
-  underneath them moved into one place.
+- aether: cosmetic/structural cleanup, no behavior change. Unified the declaration region's three banner styles onto one convention, and every banner in the file — declaration and implementation regions alike, titled and plain-divider — is now a consistent 79 characters wide (the file's actual pre-existing dominant width; two plain dividers and all twelve declaration-region title banners were 80, one character over). Fixed banner-text drift between declaration and implementation (`RING/BUFFERS`→`RING/CIRCULAR-BUFFERS`, `TIMING`→`TIMERS`, `CONSOLE-SIGNALS`→`CONSOLE-SIGNAL-HANDLING`, including a missing trailing space before `*/`); reordered three implementations to match their declaration order (`str8_to_int`/typed-wrapper family, `file_stream_ok`/`file_stream_valid`, `datetime_now`); applied the trailing-underscore internal-helper convention to 11 non-compliant functions (`round_up_power_2`, `align_forward_u64`, `arena_commit_page_or_chunk`, `arena_decommit_tail`, `str8_fmtv`, `str8_push_fmtv`, `c_str_push_fmtv`, `str8_list_push_fmtv`, `char_is_ws`, `char_is_upper`, `char_is_lower` — all gained a trailing `_`, with every call site updated, including `tests/test_arenas.c`'s direct call to `align_forward_u64`); removed two duplicate, already-answered `//todo(chris)` comments (with a "feild" typo) sitting above `ThreadPriority`/`ProcessPriorityClass`; fixed `file_unmap`'s declaration/definition parameter name mismatch (`map` vs `v`); fixed `str8_from_view`'s double-space typo; removed a dead `// --- paths ---` stub with nothing under it.
+- docs: `docs/cereal-design.md` is cross-linked to `hermes.h` as its shipped form — its R1/R2/R3/R5/R6/R7 requirements map directly onto `hermes.h`'s shape (the pre-rename design doc for what became `hermes`, never updated to say so). R4 (a three-way `Timeout`/`Disconnected`/`Error` result split, each handled differently by a caller) shipped simplified to `hermes.h`'s actual two-way `Timeout`/`Error` `SerialResult` — documented at decision 4 as a deliberate, accepted simplification rather than an oversight, not a header change: reliably distinguishing "device unplugged" needs Windows error-code detection that was never implemented, and the design doc's own validation plan for that case requires physically unplugging hardware, not something an automated test can exercise either way.
+- docs: `docs/console-signal.md`'s status line no longer says "designed, not yet implemented" — console-signal shipped in `[0.0.14]`, fully implemented with a dedicated passing test file; this header had been wrong for several releases. `docs/threads-design.md`'s status line is similarly corrected, but precisely: `Thread` shipped in `[0.0.13]` and is fully implemented, while `Semaphore`/`Mutex` — also covered by that same design doc — are genuinely still unimplemented (per `TODO.md`'s threading roadmap item), so the new status line says exactly that instead of overclaiming the whole doc as "implemented."
+- docs: README's IRIS intro no longer says "UDP to follow" — UDP shipped in `[0.0.14]` and the same document already shows a complete working UDP example a few sections down; self-contradictory within one file. Filled in README API-table/struct-sample gaps: `net_addr_parse_hostport`, `net_addr_to_cstr`/`net_addr_to_str8`, `socket_local_addr` (IRIS table); `thread_set_affinity` and `process_set_priority_class` (Threads table); `arena_pop` (previously name-dropped once in prose but never explained alongside its `arena_pop_to` sibling); `HighResTimer.wake_time`/`.lateness` (struct sample — the prior review had only caught one of the two missing fields).
+- docs: README's HERMES examples no longer use a C99 compound literal (`serial_open(STR("COM10"), (SerialConfig){.baud=9600})`) or bare designated-initializer aggregate init (`SerialConfig cfg = {.baud = ...}`) — neither is legal standard C++ before C++20, and `hermes.h` is explicitly dual C/C++; the project already has a hard rule against exactly this pattern (compound literals were specifically removed from `aether.h` itself in `[0.0.9]` so the header passes `tests/verify_cxx11.cpp`'s pedantic probe). Rewritten using the zero-init-then-assign idiom (`SerialConfig cfg = {0}; cfg.baud = 9600;`) already used everywhere else in both headers' own code — three spots fixed: the API-table example, the `SerialConfig`-defaults `NOTE`, and the full round-trip code block (that last one used the designated-initializer form without a compound-literal cast, same underlying non-conformance, not originally called out by line number in `docs/v0.0.19-review-findings.md` but the same fix either way).
+- iris: `net_addr_to_cstr`'s declaration now spells the second parameter `char* buf` to match its definition — the only declaration/definition spelling mismatch in any of the three headers. The function's bare `u32`-length, `snprintf`-style return (unlike every other `iris.h` function's explicit `b8`/`NetResult` channel) is a deliberate, considered choice to keep: it already safely `NUL`-terminates and truncates (see the existing `addr_to_cstr_and_str8` case in `tests/test_networking.c`), and a caller detects truncation the same way any `snprintf` caller does — `len >= buf_size`.
+- hermes: `serial_close`'s doc comment no longer claims the same cross-thread cancellation safety as `socket_close` — `os_serial_port_open` opens with plain `CreateFileA` (no `FILE_FLAG_OVERLAPPED`), and Windows doesn't document `CloseHandle` as safely unblocking a pending synchronous `ReadFile`/`WriteFile` on another thread the way `closesocket` is documented to unblock a pending `recv`/`send`. The doc now states only what's actually guaranteed (the CAS makes concurrent `serial_close` calls on the same port safe) and flags the rest as untested. `serial_read` and `serial_write`'s previously-shared "blocking, with a timeout" doc comment is split: only `serial_read` honors `cfg.timeout_mode`; `serial_write` always blocks indefinitely regardless of it (already the intentional, shipped behavior — see `[Unreleased]`'s hermes entry above — this is a doc-only change, no code moved), called out as specifically hazardous for RS485, which has no flow control of its own to interrupt a stalled write.
+- aether: `args_has_option` and `args_parse`'s keyword branch now share one private helper (`args_split_inline_value_`) for splitting `--name=value` on the first `=` and deciding whether an inline value is actually present, instead of duplicating the exact same `str8_cut`-based check in both places. No behavior change — the API-level split between the two functions (raw presence/value check vs. table-driven parse) is unaffected; only the shared mechanical step underneath them moved into one place.
 - docs: README sections for AETHER/IRIS/HERMES that previously shared generic `## Requirements`/`## Integration` headers (relying on GitHub's `-1`/`-2` anchor disambiguation to tell them apart) are now uniquely named per library (`## AETHER Requirements`, `## IRIS Integration`, ...), so every anchor is self-evident from its link text; HERMES's `## Serial` section is renamed `## Serial Communication`. Added a top-level Table of Contents linking all three libraries' sections, and a short preamble under AETHER introducing IRIS and HERMES as companion modules built on top of it.
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
-- aether: `args_validate` now rejects an `ArgSpec` with `positional = true`
-  and `kind = ArgKind_Flag`. Both `args_parse` and `args_validate`
-  previously accepted this combination, but `args_parse`'s parse switch
-  unconditionally sets the output `true` whenever that positional slot is
-  reached (`case ArgKind_Flag: *(b8*)spec->out = true;`), silently
-  discarding the actual token the positional was supposed to capture.
-  New `validate_positional_flag` case in `tests/test_args.c`, wired into
-  `ARGS_TEST_CASES` — also confirms `Flag`-kind stays accepted for a
-  non-positional (keyword) option, since only the combination is wrong.
-- aether: `high_res_timer_alloc`/`high_res_timer_set_rate` now `FATAL` when
-  the requested `hz` rounds `period_ticks` to `0` against the current
-  `os_time_frequency()`, instead of only asserting `hz > 0` (which says
-  nothing about an upper bound). The next `high_res_timer_wait()` divides
-  by `period_ticks` unconditionally once the timer is armed, so an
-  unbounded `hz` crashed in both build configurations — `AETHER_ASSERT_`
-  alone wouldn't have fixed this, since it compiles out in release;
-  `FATAL`'s `AETHER_DEBUG_BREAK()` traps unconditionally in every
-  configuration, matching the same-function's existing
-  `os_timer_create()`-failure precedent two lines above. Verified with a
-  standalone program: `high_res_timer_alloc(1e18)` now fails immediately
-  with a clear `FATAL ERROR: high_res_timer_alloc: hz too high...`
-  message instead of a silent divide-by-zero deep inside a later
-  `wait()`. No new test added — `FATAL` traps the process unconditionally,
-  so this isn't testable from inside the normal `ctest` harness without
-  subprocess-based test infrastructure this project doesn't have.
-- aether: `days_in_month_` now asserts `month >= 1 && month <= 12` instead
-  of only an upper bound — `month == 0` previously underflowed
-  `days[month-1]`. Safe today only because its sole caller
-  (`datetime_to_ns_since_epoch`) already validates `dt.month` before
-  calling it; this closes the "safe by the one caller" fragility rather
-  than relying on that staying true. No new test added — the project's
-  test binaries all define `AETHER_NO_ASSERT`, so an out-of-range `month`
-  passed directly to this internal helper wouldn't exercise the assert in
-  the standard test build anyway (same situation `test_overflow_guard`
-  works around by gating on `AETHER_ENABLE_ASSERTS`); the real contract
-  this protects is already covered by `datetime_to_ns_rejects_invalid`.
-- iris: `os_tcp_listen` now checks the `SO_EXCLUSIVEADDRUSE` `setsockopt`
-  return value and closes+fails the socket on error, instead of
-  discarding it — matching the convention `os_tcp_accept`/`os_tcp_connect`
-  already use for their own `TCP_NODELAY` `setsockopt` check. `os_net_init`'s
-  failure path now also `memset`s the cached `WS2API` table to zero
-  before returning `false`, mirroring what `os_net_shutdown` already does.
-  Previously a caller that ignored `net_init`'s `false` return and called
-  e.g. `tcp_connect` anyway would call through dangling function pointers
-  into unloaded module memory; now it calls through `NULL` instead. No new
-  test added — inducing either failure path (a `setsockopt` rejection, or
-  a WinSock DLL load/`WSAStartup` failure) isn't feasible without a
-  mocking seam this project doesn't have.
-- aether: `arena_push`, `arena_pop`, `arena_pop_to`, `arena_clear`,
-  `arena_begin_temp`, and `arena_end_temp` now all guard against a `NULL`
-  arena explicitly, instead of relying on the nearby `AETHER_ASSERT_` as a
-  safety net. That assert never substituted for a real guard: when asserts
-  are compiled out, the whole expression — including the `arena->`
-  dereference inside it — is never evaluated, so there was no NULL-safety
-  net in either build configuration. Every other `*_t`/`*_array` layer
-  built on top of `arena_push` already guards its own entry; these six
-  functions now match. New `null_arena_guard` case in
-  `tests/test_arenas.c`, wired into `ARENA_TEST_CASES` — unlike the
-  existing `overflow_guard` case, this one isn't gated on
-  `AETHER_ENABLE_ASSERTS` since the new guards don't depend on asserts at
-  all.
-- aether: `os_thread_set_affinity` now rejects `core_index >= 64` with
-  `false` instead of computing `(DWORD_PTR)1 << core_index` regardless —
-  a `DWORD_PTR` mask only has room for 64 logical processors (one
-  processor group on Windows), so a shift by `>= 64` is UB in C and
-  silently wraps to a shift-by-zero (core 0) on real x86/x64 hardware
-  instead of failing. Matches the existing `b8`-return convention
-  `thread_set_affinity`'s other failure path (`NULL` handle) already
-  uses. No new test added — there's no dedicated thread-API test file
-  yet to put one in (see `TODO.md`'s threading roadmap item).
-- hermes: `os_serial_read` now returns `SerialResult_OK` immediately when
-  `cap == 0`, instead of calling into `ReadFile` and mapping its
-  documented `read == 0` / `TRUE` (a legitimate zero-length no-op success)
-  to `SerialResult_Timeout`. Same bug class the project already fixed once
-  for `ring_buffer_read` in `[0.0.13]` ("conflating 'asked for nothing'
-  with 'not enough data'"), and the same early-return shape
-  (`if (cap == 0) { ...; return OK; }`) that fix used. `os_serial_write`'s
-  zero-length case was already unaffected. New manual-only
-  `zero_length_read_is_ok` case in `tests/test_serial.c`, run the same way
-  as `handshake` (needs a real null-modem pair; not wired into `ctest`) —
-  verified against this machine's com0com COM10/COM11 pair.
-- aether: `file_stream_open` now sets `fs.err = true` when the underlying
-  `os_file_open_for_write` fails, instead of leaving `err` at its zero
-  default. Previously `file_stream_ok()` (`return !fs->err;`) reported
-  `true` for a stream that never opened; once such a stream's buffer
-  filled, `file_stream_flush`'s `if (!fs->handle || fs->len == 0) return
-  true;` kept reporting success while silently dropping every subsequent
-  write — no crash, just data loss `ok()` never surfaced, directly
-  undercutting the feature's own documented purpose ("check once after a
-  batch of writes... instead of threading a `b8` through every call").
-  Existing `stream_open_failure` case in `tests/test_files.c` strengthened
-  with an explicit `file_stream_ok()` check right after the failed open
-  (it previously never called `file_stream_ok()` at all, so it didn't
-  catch this).
-- aether: `high_res_timer_wait` no longer asserts `t && t->armed`
-  immediately before the `if (!t || !t->armed) return 0;` guard that
-  `[0.0.14]` documented as making `wait()` on a never-armed timer a
-  defined, safe no-op. The assert directly contradicted the guard one line
-  below it, introduced in the same commit that added the safe-no-op
-  behavior it undermined — the `if`-guard already implements the
-  documented contract completely, so the assert is simply removed. Turns
-  the existing `timer_wait_without_arm_is_safe` and
-  `timer_release_clears_state` cases in `tests/test_timer.c` green; no new
-  test needed.
-- aether: `str8_list_to_array` asserts `node != NULL` before dereferencing
-  it on each iteration instead of after advancing past the final element —
-  the assert previously ran on every iteration including the last, where
-  `node` is correctly `NULL` (end of list) by construction, crashing on any
-  non-empty `Str8List` in a debug build. Present since the function's
-  introduction in `[0.0.12]`. Caught directly by the existing `str8_join`
-  case in `tests/test_strings.c`, now passing; no new test needed.
-- aether: `args_parse` now resets every spec's `was_set` to `false` at the
-  top of the call, mirroring the existing `*out_err` reset for exactly the
-  same "no stale state across calls" reason. Previously `was_set` was
-  written `true` on a successful match but never reset anywhere, so a
-  caller that reuses or copies a previously-parsed `ArgSpec` table into a
-  second `args_parse` call (a REPL, subcommand dispatch, anything building
-  variants off a shared base table) inherited a stale `was_set == true`
-  from the earlier call, and the `required` check at the end of the
-  function silently passed even though the current `argv` never supplied
-  that field. New `was_set_reset_across_calls` case in `tests/test_args.c`.
-- aether: `args_parse`'s keyword branch now rejects an inline value attached
-  to a `Flag`-kind option (`--verbose=false`, `--verbose=anything`) with a
-  parse error instead of silently discarding the value and setting the flag
-  `true` regardless of what followed the `=`. `has_inline`/`inline_val` were
-  already computed for every keyword option but were only ever consulted
-  when `spec->kind != ArgKind_Flag`; a `Flag` spec fell straight through to
-  `case ArgKind_Flag: *(b8*)spec->out = true;`. A truly empty `--verbose=`
-  is unaffected by this change and still sets the flag `true`, matching the
-  existing "an empty inline value is the same as no inline value at all"
-  convention (`has_inline` requires a non-empty value by definition). New
-  `flag_rejects_inline_value` case in `tests/test_args.c`.
+- aether: `args_validate` now rejects an `ArgSpec` with `positional = true` and `kind = ArgKind_Flag`. Both `args_parse` and `args_validate` previously accepted this combination, but `args_parse`'s parse switch unconditionally sets the output `true` whenever that positional slot is reached (`case ArgKind_Flag: *(b8*)spec->out = true;`), silently discarding the actual token the positional was supposed to capture. New `validate_positional_flag` case in `tests/test_args.c`, wired into `ARGS_TEST_CASES` — also confirms `Flag`-kind stays accepted for a non-positional (keyword) option, since only the combination is wrong.
+- aether: `high_res_timer_alloc`/`high_res_timer_set_rate` now `FATAL` when the requested `hz` rounds `period_ticks` to `0` against the current `os_time_frequency()`, instead of only asserting `hz > 0` (which says nothing about an upper bound). The next `high_res_timer_wait()` divides by `period_ticks` unconditionally once the timer is armed, so an unbounded `hz` crashed in both build configurations — `AETHER_ASSERT_` alone wouldn't have fixed this, since it compiles out in release; `FATAL`'s `AETHER_DEBUG_BREAK()` traps unconditionally in every configuration, matching the same-function's existing `os_timer_create()`-failure precedent two lines above. Verified with a standalone program: `high_res_timer_alloc(1e18)` now fails immediately with a clear `FATAL ERROR: high_res_timer_alloc: hz too high...` message instead of a silent divide-by-zero deep inside a later `wait()`. No new test added — `FATAL` traps the process unconditionally, so this isn't testable from inside the normal `ctest` harness without subprocess-based test infrastructure this project doesn't have.
+- aether: `days_in_month_` now asserts `month >= 1 && month <= 12` instead of only an upper bound — `month == 0` previously underflowed `days[month-1]`. Safe today only because its sole caller (`datetime_to_ns_since_epoch`) already validates `dt.month` before calling it; this closes the "safe by the one caller" fragility rather than relying on that staying true. No new test added — the project's test binaries all define `AETHER_NO_ASSERT`, so an out-of-range `month` passed directly to this internal helper wouldn't exercise the assert in the standard test build anyway (same situation `test_overflow_guard` works around by gating on `AETHER_ENABLE_ASSERTS`); the real contract this protects is already covered by `datetime_to_ns_rejects_invalid`.
+- iris: `os_tcp_listen` now checks the `SO_EXCLUSIVEADDRUSE` `setsockopt` return value and closes+fails the socket on error, instead of discarding it — matching the convention `os_tcp_accept`/`os_tcp_connect` already use for their own `TCP_NODELAY` `setsockopt` check. `os_net_init`'s failure path now also `memset`s the cached `WS2API` table to zero before returning `false`, mirroring what `os_net_shutdown` already does. Previously a caller that ignored `net_init`'s `false` return and called e.g. `tcp_connect` anyway would call through dangling function pointers into unloaded module memory; now it calls through `NULL` instead. No new test added — inducing either failure path (a `setsockopt` rejection, or a WinSock DLL load/`WSAStartup` failure) isn't feasible without a mocking seam this project doesn't have.
+- aether: `arena_push`, `arena_pop`, `arena_pop_to`, `arena_clear`, `arena_begin_temp`, and `arena_end_temp` now all guard against a `NULL` arena explicitly, instead of relying on the nearby `AETHER_ASSERT_` as a safety net. That assert never substituted for a real guard: when asserts are compiled out, the whole expression — including the `arena->` dereference inside it — is never evaluated, so there was no NULL-safety net in either build configuration. Every other `*_t`/`*_array` layer built on top of `arena_push` already guards its own entry; these six functions now match. New `null_arena_guard` case in `tests/test_arenas.c`, wired into `ARENA_TEST_CASES` — unlike the existing `overflow_guard` case, this one isn't gated on `AETHER_ENABLE_ASSERTS` since the new guards don't depend on asserts at all.
+- aether: `os_thread_set_affinity` now rejects `core_index >= 64` with `false` instead of computing `(DWORD_PTR)1 << core_index` regardless — a `DWORD_PTR` mask only has room for 64 logical processors (one processor group on Windows), so a shift by `>= 64` is UB in C and silently wraps to a shift-by-zero (core 0) on real x86/x64 hardware instead of failing. Matches the existing `b8`-return convention `thread_set_affinity`'s other failure path (`NULL` handle) already uses. No new test added — there's no dedicated thread-API test file yet to put one in (see `TODO.md`'s threading roadmap item).
+- hermes: `os_serial_read` now returns `SerialResult_OK` immediately when `cap == 0`, instead of calling into `ReadFile` and mapping its documented `read == 0` / `TRUE` (a legitimate zero-length no-op success) to `SerialResult_Timeout`. Same bug class the project already fixed once for `ring_buffer_read` in `[0.0.13]` ("conflating 'asked for nothing' with 'not enough data'"), and the same early-return shape (`if (cap == 0) { ...; return OK; }`) that fix used. `os_serial_write`'s zero-length case was already unaffected. New manual-only `zero_length_read_is_ok` case in `tests/test_serial.c`, run the same way as `handshake` (needs a real null-modem pair; not wired into `ctest`) — verified against this machine's com0com COM10/COM11 pair.
+- aether: `file_stream_open` now sets `fs.err = true` when the underlying `os_file_open_for_write` fails, instead of leaving `err` at its zero default. Previously `file_stream_ok()` (`return !fs->err;`) reported `true` for a stream that never opened; once such a stream's buffer filled, `file_stream_flush`'s `if (!fs->handle || fs->len == 0) return true;` kept reporting success while silently dropping every subsequent write — no crash, just data loss `ok()` never surfaced, directly undercutting the feature's own documented purpose ("check once after a batch of writes... instead of threading a `b8` through every call"). Existing `stream_open_failure` case in `tests/test_files.c` strengthened with an explicit `file_stream_ok()` check right after the failed open (it previously never called `file_stream_ok()` at all, so it didn't catch this).
+- aether: `high_res_timer_wait` no longer asserts `t && t->armed` immediately before the `if (!t || !t->armed) return 0;` guard that `[0.0.14]` documented as making `wait()` on a never-armed timer a defined, safe no-op. The assert directly contradicted the guard one line below it, introduced in the same commit that added the safe-no-op behavior it undermined — the `if`-guard already implements the documented contract completely, so the assert is simply removed. Turns the existing `timer_wait_without_arm_is_safe` and `timer_release_clears_state` cases in `tests/test_timer.c` green; no new test needed.
+- aether: `str8_list_to_array` asserts `node != NULL` before dereferencing it on each iteration instead of after advancing past the final element — the assert previously ran on every iteration including the last, where `node` is correctly `NULL` (end of list) by construction, crashing on any non-empty `Str8List` in a debug build. Present since the function's introduction in `[0.0.12]`. Caught directly by the existing `str8_join` case in `tests/test_strings.c`, now passing; no new test needed.
+- aether: `args_parse` now resets every spec's `was_set` to `false` at the top of the call, mirroring the existing `*out_err` reset for exactly the same "no stale state across calls" reason. Previously `was_set` was written `true` on a successful match but never reset anywhere, so a caller that reuses or copies a previously-parsed `ArgSpec` table into a second `args_parse` call (a REPL, subcommand dispatch, anything building variants off a shared base table) inherited a stale `was_set == true` from the earlier call, and the `required` check at the end of the function silently passed even though the current `argv` never supplied that field. New `was_set_reset_across_calls` case in `tests/test_args.c`.
+- aether: `args_parse`'s keyword branch now rejects an inline value attached to a `Flag`-kind option (`--verbose=false`, `--verbose=anything`) with a parse error instead of silently discarding the value and setting the flag `true` regardless of what followed the `=`. `has_inline`/`inline_val` were already computed for every keyword option but were only ever consulted when `spec->kind != ArgKind_Flag`; a `Flag` spec fell straight through to `case ArgKind_Flag: *(b8*)spec->out = true;`. A truly empty `--verbose=` is unaffected by this change and still sets the flag `true`, matching the existing "an empty inline value is the same as no inline value at all" convention (`has_inline` requires a non-empty value by definition). New `flag_rejects_inline_value` case in `tests/test_args.c`.
 - aether: `str8_trim`/`str8_trim_left`/`str8_trim_right`/`str8_eq_nocase`/`str8_find`/`str8_find_last`/`str8_find_char`/`str8_has_prefix`/`str8_has_suffix` now guard against `NULL` data with `size > 0` via `AETHER_ASSERT_`, matching every other string-query function in the header. `str8_find`/`str8_find_last`/`str8_find_char` previously had no guard at all; `str8_has_prefix`/`str8_has_suffix` used a plain `if (!x)` that silently treated a `NULL` input as "no match" in both debug and release instead of flagging caller error.
 - aether: `str8_find`/`str8_find_last`/`str8_find_char` no longer unconditionally dereference their `pos` out-param — it's now optional (`if (pos) *pos = ...`), matching how iris's `out_recv`/`out_sent`/etc. already treat their out-params. Previously e.g. `str8_find(s, STR(""), NULL)` (empty needle, no `pos`) crashed on the unconditional write.
 - aether: `str8_find`/`str8_find_last`/`str8_find_char`'s out-param renamed `pos` → `out_pos`, matching the `out`/`out_*` convention every other single-out-param function in the header uses (`str8_to_u64`'s `out`, `os_file_size`'s `out_size`). No functional change — C has no named arguments, so no call site is affected.
