@@ -1,6 +1,14 @@
 # Design: CEREAL — Minimal RS-232 Serial for C/C++
 
-Status: DRAFT (2026-08-19).
+Status: **Shipped as `hermes.h`** — R1/R2/R3/R5/R6/R7 map directly onto
+`hermes.h`'s shipped shape (same requirements, different final names:
+`cereal`/`Cereal` became `hermes`/`Hermes` to match the project's
+Greek-mythology module-naming convention). R4 shipped simplified — see
+the note under decision 4 below. This doc is kept as the design record
+for *why* the shape looks the way it does; `hermes.h` is the source of
+truth for current behavior.
+
+Original status: DRAFT (2026-08-19).
 Consumer driving the requirements: a pressure-transducer datalogger — one
 instrument, one port, ASCII query/reply over RS-232, scheduled polling,
 log to file. No second consumer yet. Per `iris`'s own precedent (its
@@ -110,6 +118,18 @@ multi-port management.
    force the caller to re-derive the distinction from `errno` at the call
    site, which is exactly what iris's own result-model rationale argues
    against.
+
+   **Shipped simplified:** `hermes.h`'s `SerialResult` has only
+   `OK`/`Timeout`/`Error` — `Disconnected` and `Error` collapsed into one
+   case, accepted as a deliberate simplification rather than an oversight.
+   Reliably distinguishing "device unplugged" from "other error" needs
+   Windows error-code detection after a failed `ReadFile`/`WriteFile`
+   (`ERROR_DEVICE_REMOVED`-class codes vs. others) that was never
+   implemented, and this doc's own validation plan (item 4, below) for
+   that case requires physically unplugging a USB-serial adapter — not
+   something an automated test can exercise either way. Revisit by adding
+   `SerialResult_Disconnected` back if a real caller needs the
+   retry/alert/log distinction R4 originally asked for.
 
 5. **The read deadline is configured once, in `SerialConfig`, not passed
    per call.** It's a property of the instrument/link (how long this
