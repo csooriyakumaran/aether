@@ -73,7 +73,17 @@ $notes     = ($lines[($start + 1)..($end - 1)] -join "`n").Trim()
 $notesFile = Join-Path ([System.IO.Path]::GetTempPath()) "aether-$tag-notes.md"
 $notes | Set-Content $notesFile -Encoding utf8
 
-# --- gate: build + test, abort on red ------------------------------------
+# --- gate: debug build + test, abort on red ------------------------------
+# AETHER_BUILD_DEBUG (and so every AETHER_ASSERT_) defaults from !defined(NDEBUG),
+# which a Release config always defines -- so a Release-only gate can never catch
+# an assert-based bug. Run the full suite with asserts live first, in a separate
+# build directory, before the Release build below (which is what actually ships).
+$buildDebug = Join-Path $root 'build-debug'
+Exec cmake @('-S', $root, '-B', $buildDebug, '-DCMAKE_BUILD_TYPE=Debug', '-DAETHER_BUILD_TESTS=ON')
+Exec cmake @('--build', $buildDebug, '--config', 'Debug')
+Exec ctest @('--test-dir', $buildDebug, '-C', 'Debug', '--output-on-failure')
+
+# --- gate: release build + test, abort on red ----------------------------
 # -DCMAKE_BUILD_TYPE=Release covers Ninja (single-config); --config Release covers
 # MSVC (multi-config). Each is a harmless no-op under the other generator.
 $build = Join-Path $root 'build'
