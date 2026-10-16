@@ -2618,6 +2618,18 @@ AETHER_API u32 utf8_width(str8 s)
 /* --- C L I - A R G U M E N T S ------------------------------------------- */
 /* ------------------------------------------------------------------------- */
 
+/* split "--name=value" on the first "=" into out_key/out_inline_val, returning
+   whether there's an actual inline value present. A truly empty "--name="
+   (nothing at all after the "=") returns false, same as no "=" at all --
+   callers that also want to treat a whitespace-only value as empty (e.g.
+   "--name= ") trim it themselves afterward, same as before this was shared.
+   Shared by args_has_option and args_parse's keyword branch, which otherwise
+   duplicated this exact split-and-fallthrough step */
+internal b8 args_split_inline_value_(str8 arg, str8* out_key, str8* out_inline_val)
+{
+    return str8_cut(arg, STR("="), out_key, out_inline_val) && out_inline_val->size > 0;
+}
+
 internal ArgSpec* args_find_option_(ArgSpec* spec, u64 count, str8 key)
 {
     if (!spec) return NULL;
@@ -2671,7 +2683,7 @@ AETHER_API b8 args_has_option(int argc, char** argv, str8 name, str8 alias, str8
         str8 arg = str8_from_c_str(argv[i]);
 
         str8 key, inline_val;
-        b8 has_inline = str8_cut(arg, STR("="), &key, &inline_val) && inline_val.size > 0;
+        b8 has_inline = args_split_inline_value_(arg, &key, &inline_val);
         b8 matched    = str8_eq(key, name) || ( alias.size && str8_eq(key, alias) );
 
         if (!matched) continue;
@@ -2727,7 +2739,7 @@ AETHER_API b8 args_parse(int argc, char** argv, ArgSpec* specs, u64 count, Arena
             /* an empty "--name=" is treated the same as no "=" at all, falling through to
                the next argv element -- a real shell already splits an unquoted "--name= value"
                typo into exactly these two elements, so this is the realistic case, not an edge one */
-            b8 has_inline = str8_cut(arg, STR("="), &key, &inline_val) && inline_val.size > 0;
+            b8 has_inline = args_split_inline_value_(arg, &key, &inline_val);
 
             spec = args_find_option_(specs, count, key);
             if (!spec)
