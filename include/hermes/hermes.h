@@ -284,7 +284,14 @@ typedef struct SerialConfig
 } SerialConfig;
 
 HERMES_API SerialPort serial_open(str8 device, SerialConfig cfg); /* {0} on failure; device e.g. STR("COM10") */
-HERMES_API void       serial_close(SerialPort* p);                /* zeros the handle, cross-thread cancellation */
+/* Zeros the handle; safe if two threads both call serial_close on the same SerialPort
+   concurrently (claimed via CAS, so only one actually closes). Unlike socket_close,
+   this is NOT documented-safe cross-thread cancellation of a pending read/write:
+   os_serial_port_open opens with plain CreateFileA (no FILE_FLAG_OVERLAPPED), and
+   Windows doesn't document CloseHandle as safely unblocking a pending synchronous
+   ReadFile/WriteFile on another thread the way closesocket is documented to unblock
+   a pending recv/send. Untested in either direction. */
+HERMES_API void       serial_close(SerialPort* p);
 HERMES_API b8         serial_valid(SerialPort p);
 
 typedef u8 SerialResult;
@@ -295,8 +302,14 @@ enum SerialResult_
     SerialResult_Error,   /* port is dead; close it */
 };
 
-/* Blocking, with a timeout. Partial reads/writes are normal for serial --
- * always check out_recv/out_sent, do not assume the whole buffer moved. */
+/* serial_read honors the port's configured timeout_mode (Block/Timeout/Poll).
+ * serial_write always blocks until the OS reports the bytes written --
+ * timeout_mode has no write-side effect; WriteTotalTimeoutConstant/Multiplier
+ * are never configured, so a stalled bus blocks indefinitely regardless of
+ * cfg.timeout_mode. Hazardous specifically for RS485, which has no flow
+ * control of its own to interrupt a stalled write.
+ * Partial reads/writes are normal for serial either way -- always check
+ * out_recv/out_sent, do not assume the whole buffer moved. */
 HERMES_API SerialResult serial_read(SerialPort p, void* buf, u64 cap, u64* out_recv);
 HERMES_API SerialResult serial_write(SerialPort p, const void* src, u64 len, u64* out_sent); /* RS485 turnaround handled internally per the port's configured mode */
 
