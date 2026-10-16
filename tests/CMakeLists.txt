@@ -14,7 +14,7 @@ set(ARENA_TEST_CASES
     temp_nested temp_out_of_order_is_safe temp_rk4_pattern clear decommit_flag
     commit_chunked_flag debug_fill_on_clear_flag strings overflow_guard
     align_forward_overflow release many_small_pushes header_survives_clear
-    first_push_at_header_floor
+    first_push_at_header_floor null_arena_guard
 )
 
 foreach(case ${ARENA_TEST_CASES})

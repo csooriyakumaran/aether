@@ -17,6 +17,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- aether: `arena_push`, `arena_pop`, `arena_pop_to`, `arena_clear`,
+  `arena_begin_temp`, and `arena_end_temp` now all guard against a `NULL`
+  arena explicitly, instead of relying on the nearby `AETHER_ASSERT_` as a
+  safety net. That assert never substituted for a real guard: when asserts
+  are compiled out, the whole expression — including the `arena->`
+  dereference inside it — is never evaluated, so there was no NULL-safety
+  net in either build configuration. Every other `*_t`/`*_array` layer
+  built on top of `arena_push` already guards its own entry; these six
+  functions now match. New `null_arena_guard` case in
+  `tests/test_arenas.c`, wired into `ARENA_TEST_CASES` — unlike the
+  existing `overflow_guard` case, this one isn't gated on
+  `AETHER_ENABLE_ASSERTS` since the new guards don't depend on asserts at
+  all.
 - aether: `os_thread_set_affinity` now rejects `core_index >= 64` with
   `false` instead of computing `(DWORD_PTR)1 << core_index` regardless —
   a `DWORD_PTR` mask only has room for 64 logical processors (one

@@ -1564,6 +1564,7 @@ AETHER_API void arena_release(Arena* arena)
 
 AETHER_API void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
 {
+    if (!arena) return NULL;
     AETHER_ASSERT_(arena->pos <= arena->reserved_size);
 
     u64 aligned_pos = align_forward_u64(arena->pos, align);
@@ -1595,6 +1596,7 @@ AETHER_API void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
 
 AETHER_API void arena_pop_to(Arena* arena, u64 pos)
 {
+    if (!arena) return;
     if (pos < AETHER_ARENA_HEADER_SIZE) pos = AETHER_ARENA_HEADER_SIZE;
     if (pos > arena->pos)               pos = arena->pos;
 
@@ -1610,6 +1612,7 @@ AETHER_API void arena_pop_to(Arena* arena, u64 pos)
 
 AETHER_API void arena_pop(Arena* arena, u64 amt)
 {
+    if (!arena) return;
     if (amt > arena->pos)
         amt = arena->pos;
 
@@ -1618,12 +1621,14 @@ AETHER_API void arena_pop(Arena* arena, u64 amt)
 
 AETHER_API void arena_clear(Arena* arena)
 {
+    if (!arena) return;
     arena_pop_to(arena, AETHER_ARENA_HEADER_SIZE);
 }
 
 AETHER_API ArenaTemp arena_begin_temp(Arena* arena)
 {
-    ArenaTemp tmp;
+    ArenaTemp tmp = {0};
+    if (!arena) return tmp;
     tmp.arena = arena;
     tmp.pos   = arena->pos;
     return tmp;
@@ -1631,6 +1636,7 @@ AETHER_API ArenaTemp arena_begin_temp(Arena* arena)
 
 AETHER_API void arena_end_temp(ArenaTemp temp)
 {
+    if (!temp.arena) return;
     AETHER_ASSERT_(temp.pos <= temp.arena->pos);
     arena_pop_to(temp.arena, temp.pos);
 }

@@ -627,6 +627,24 @@ static void test_first_push_at_header_floor(void)
     arena_release(arena);
 }
 
+static void test_null_arena_guard(void)
+{
+    SECTION("push/pop/clear/temp: a NULL arena is a safe no-op in every build configuration, not just when asserts are compiled out");
+
+    /* unlike the overflow guard above, these checks don't depend on
+       AETHER_ASSERT_ being compiled in -- arena_push etc. guard arena != NULL
+       directly, so this must hold the same way in both debug and release */
+    ASSERT(arena_push(NULL, 16, 1, ArenaZero_Never) == NULL);
+
+    arena_pop(NULL, 16);       /* must not crash */
+    arena_pop_to(NULL, 0);     /* must not crash */
+    arena_clear(NULL);         /* must not crash */
+
+    ArenaTemp tmp = arena_begin_temp(NULL);
+    ASSERT(tmp.arena == NULL);
+    arena_end_temp(tmp);       /* must not crash */
+}
+
 typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"array_count",              test_array_count},
@@ -652,6 +670,7 @@ static TestCase g_cases[] = {
     {"many_small_pushes",        test_many_small_pushes},
     {"header_survives_clear",    test_header_survives_clear},
     {"first_push_at_header_floor", test_first_push_at_header_floor},
+    {"null_arena_guard",           test_null_arena_guard},
 };
 
 int main(int argc, char** argv)
