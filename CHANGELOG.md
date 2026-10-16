@@ -17,6 +17,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- aether: `str8_list_to_array` asserts `node != NULL` before dereferencing
+  it on each iteration instead of after advancing past the final element —
+  the assert previously ran on every iteration including the last, where
+  `node` is correctly `NULL` (end of list) by construction, crashing on any
+  non-empty `Str8List` in a debug build. Present since the function's
+  introduction in `[0.0.12]`. Caught directly by the existing `str8_join`
+  case in `tests/test_strings.c`, now passing; no new test needed.
 - aether: `args_parse` now resets every spec's `was_set` to `false` at the
   top of the call, mirroring the existing `*out_err` reset for exactly the
   same "no stale state across calls" reason. Previously `was_set` was

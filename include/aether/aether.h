@@ -2257,9 +2257,9 @@ AETHER_API Str8Array str8_list_to_array(Arena* arena, Str8List* list)
     Str8Node* node = list->first;
     for (u64 i = 0; i < result.count; ++i)
     {
+        AETHER_ASSERT_(node); /* catches a genuinely-too-short list */
         result.items[i] = node->v;
         node = node->next;
-        AETHER_ASSERT_(node);
     }
     return result;
 }
