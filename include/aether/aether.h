@@ -3200,7 +3200,6 @@ AETHER_API HighResTimer high_res_timer_create(f64 hz)
 
 AETHER_API u64 high_res_timer_wait(HighResTimer* t)
 {
-    AETHER_ASSERT_(t && t->armed);
     if (!t || !t->armed) return 0;
 
     u64 now = os_time_now();

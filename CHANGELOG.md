@@ -17,6 +17,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- aether: `high_res_timer_wait` no longer asserts `t && t->armed`
+  immediately before the `if (!t || !t->armed) return 0;` guard that
+  `[0.0.14]` documented as making `wait()` on a never-armed timer a
+  defined, safe no-op. The assert directly contradicted the guard one line
+  below it, introduced in the same commit that added the safe-no-op
+  behavior it undermined — the `if`-guard already implements the
+  documented contract completely, so the assert is simply removed. Turns
+  the existing `timer_wait_without_arm_is_safe` and
+  `timer_release_clears_state` cases in `tests/test_timer.c` green; no new
+  test needed.
 - aether: `str8_list_to_array` asserts `node != NULL` before dereferencing
   it on each iteration instead of after advancing past the final element —
   the assert previously ran on every iteration including the last, where
