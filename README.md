@@ -220,6 +220,8 @@ TemporaryThing *tmp = arena_push_t(arena, TemporaryThing);
 arena_pop_to(arena, mark);
 ```
 
+`arena_pop(arena, amt)` is the amount-based sibling of `arena_pop_to` — pop back `amt` bytes from the current position instead of to an absolute saved mark, for the common "undo my last N bytes" case where saving a mark first would be overkill.
+
 ***Common Patterns***
 
 | PATTERN         | DESCRIPTION                                                           |
@@ -578,6 +580,8 @@ typedef struct HighResTimer
     u64   next_deadline;
     u64   overrun;
     u64   spin_margin;
+    u64   wake_time;   /* timestamp wait() actually returned at, comparable to time_mark() */
+    u64   lateness;    /* wake_time - target deadline; 0 on a perfectly on-time wake        */
     void* os_timer;
     b32   armed;
 } HighResTimer;
@@ -632,8 +636,10 @@ typedef struct Thread { void* handle; } Thread;
 | `thread_create(fn, user)`   | Start a thread running `fn(user)`. Returns a `Thread` by value; `handle == NULL` on failure (or if `fn` is `NULL`). |
 | `thread_join(&t, &code)`    | Wait for the thread to finish, optionally receive its return value, then close and `NULL` the handle. Returns `b8` — `false` for a `NULL`/already-joined thread, so joining twice is safe, not UB. |
 | `thread_set_priority(&t, p)` | Map `ThreadPriority_Normal` / `_High` / `_TimeCritical` onto the OS scheduler priority. Returns `b8` success. |
+| `thread_set_affinity(&t, core_index)` | Pin the thread to one logical processor (`0`..`63`). Returns `b8` success; rejects `core_index >= 64`. |
 | `thread_yield()`            | Offer the rest of the timeslice to another ready thread (used in spin-wait loops).             |
 | `thread_sleep_ms(ms)`       | Sleep for `ms` milliseconds; `thread_sleep_ms(0)` yields instead.                              |
+| `process_set_priority_class(c)` | Map `ProcessPriorityClass_Normal` / `_High` / `_Realtime` onto the whole process's OS scheduler priority class. Returns `b8` success. `_Realtime` can starve the whole system if a thread in it spins — use deliberately. |
 
 The start arguments are handed off with an acquire/release handshake: `thread_create` does not return until the new thread has copied `fn` and `user` out of the caller's frame, so they may safely live on the caller's stack — no heap allocation is needed (or performed) to launch a thread.
 
@@ -829,7 +835,7 @@ If the message can't be completed after all (an encode error, say), `ring_buffer
 
 ***lightweight sockets on top of aether***
 
-IRIS is a small single-header networking library. It provides blocking IPv4 socket primitives — TCP listen/accept/connect/send/recv, UDP to follow — built around one pattern: a dedicated network thread that a coordinator cancels by closing its socket, rather than a non-blocking/poll loop.
+IRIS is a small single-header networking library. It provides blocking IPv4 socket primitives — TCP listen/accept/connect/send/recv and UDP send/recv — built around one pattern: a dedicated network thread that a coordinator cancels by closing its socket, rather than a non-blocking/poll loop.
 
 ## IRIS Requirements
 
@@ -863,7 +869,10 @@ enum NetResult_ { NetResult_OK = 0, NetResult_Closed, NetResult_Error };
 | --- | --- |
 | `net_addr(a,b,c,d,port)` / `net_addr_any(port)` / `net_addr_loopback(port)` | Build a `NetAddr` from literal octets, `0.0.0.0`, or `127.0.0.1`. |
 | `net_addr_parse(dotted_quad, port, &out)` | Numeric-only parse (no DNS); rejects garbage/out-of-range octets. |
+| `net_addr_parse_hostport(s, default_port, &out)` | Parse `"host[:port]"` — `host` is a dotted quad or `"localhost"`; an omitted `:port` falls back to `default_port`. Still numeric-only, no DNS beyond the `localhost` special case. |
+| `net_addr_to_cstr(addr, buf, buf_size)` / `net_addr_to_str8(arena, addr)` | Format a `NetAddr` as `"a.b.c.d:port"` — into a caller-owned buffer (`snprintf`-style `u32` length return, safely truncates) or an arena-backed `str8`. |
 | `socket_valid(s)` / `socket_close(&s)` | Check / release a socket. `socket_close` is safe to call from another thread while `s` is blocked inside `tcp_accept`/`tcp_recv`/`tcp_send` — this is how a coordinator cancels a network thread. |
+| `socket_local_addr(s, &out)` | `getsockname` — resolves which local address/port the OS actually bound, needed to discover an ephemeral port after `udp_open`/`tcp_listen` with port `0`. |
 | `tcp_listen(addr, backlog)` | Bind + listen. `{0}` on failure. |
 | `tcp_accept(listener, &out_peer)` | Blocks until a connection arrives. `{0}` only on cancellation or a hard failure — never "nobody pending yet". |
 | `tcp_connect(addr)` | Blocking handshake. `{0}` on failure. |
