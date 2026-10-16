@@ -3065,6 +3065,7 @@ AETHER_API FileStream file_stream_open(const char* path, u8* buf, u64 buf_cap)
 {
     FileStream fs = {0};
     fs.handle = os_file_open_for_write(path);
+    fs.err = fs.handle == NULL;
     fs.buf = buf;
     fs.cap = buf_cap;
     return fs;

@@ -17,6 +17,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- aether: `file_stream_open` now sets `fs.err = true` when the underlying
+  `os_file_open_for_write` fails, instead of leaving `err` at its zero
+  default. Previously `file_stream_ok()` (`return !fs->err;`) reported
+  `true` for a stream that never opened; once such a stream's buffer
+  filled, `file_stream_flush`'s `if (!fs->handle || fs->len == 0) return
+  true;` kept reporting success while silently dropping every subsequent
+  write — no crash, just data loss `ok()` never surfaced, directly
+  undercutting the feature's own documented purpose ("check once after a
+  batch of writes... instead of threading a `b8` through every call").
+  Existing `stream_open_failure` case in `tests/test_files.c` strengthened
+  with an explicit `file_stream_ok()` check right after the failed open
+  (it previously never called `file_stream_ok()` at all, so it didn't
+  catch this).
 - aether: `high_res_timer_wait` no longer asserts `t && t->armed`
   immediately before the `if (!t || !t->armed) return 0;` guard that
   `[0.0.14]` documented as making `wait()` on a never-armed timer a

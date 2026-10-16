@@ -323,6 +323,7 @@ static void test_stream_open_failure(void)
     u8 buf[16];
     FileStream fs = file_stream_open("aether_no_such_dir/x.tmp", buf, sizeof(buf));
     ASSERT(!file_stream_valid(&fs));
+    ASSERT(!file_stream_ok(&fs)); /* a stream that never opened must report failure, not silent success */
 
     bytes dst = file_stream_reserve(&fs, 4);
     ASSERT(dst.data != NULL); /* buffer itself is still usable even with no backing file */
