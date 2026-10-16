@@ -958,18 +958,21 @@ enum SerialResult_ { SerialResult_OK = 0, SerialResult_Timeout, SerialResult_Err
 
 | FUNCTION | DESCRIPTION |
 | --- | --- |
-| `serial_open(device, cfg)` | Open + configure a port, e.g. `serial_open(STR("COM10"), (SerialConfig){.baud=9600})`. `{0}` on failure. |
+| `serial_open(device, cfg)` | Open + configure a port, e.g. `SerialConfig cfg = {0}; cfg.baud = 9600; serial_open(STR("COM10"), cfg);`. `{0}` on failure. |
 | `serial_valid(p)` / `serial_close(&p)` | Check / release a port. |
 | `serial_read(p, buf, cap, &out_recv)` | Blocking behavior follows the port's configured `SerialTimeoutMode`, set once at `open`: `Block` waits for `cap` bytes indefinitely, `Timeout` waits up to `timeout_ms`, `Poll` returns immediately with whatever's already buffered. Partial reads are normal, always check `out_recv`. `SerialResult_Timeout` (not an error) if nothing arrived — including a `Poll` call that found nothing waiting. |
 | `serial_write(p, src, len, &out_sent)` | Blocking send. RS485 TX/RX turnaround is handled by the driver (`RTS_CONTROL_TOGGLE`, set once at `open`) — `serial_write` itself is identical for RS232 and RS485. |
 
 > [!NOTE]
-> Every `SerialConfig` field defaults to its most common setting at `0` — `None`/`One`/`RS232`/`Block` — so a zero-filled config beyond `baud` is already valid: `(SerialConfig){.baud = 9600}` is a complete, correct 8N1 RS232 configuration that blocks indefinitely on read until `cap` bytes arrive.
+> Every `SerialConfig` field defaults to its most common setting at `0` — `None`/`One`/`RS232`/`Block` — so a zero-filled config beyond `baud` is already valid: `SerialConfig cfg = {0}; cfg.baud = 9600;` is a complete, correct 8N1 RS232 configuration that blocks indefinitely on read until `cap` bytes arrive.
 
 A round trip with an instrument on the other end of the link:
 
 ```c
-SerialConfig cfg = {.baud = 9600, .timeout_mode = SerialTimeoutMode_Timeout, .timeout_ms = 1000};
+SerialConfig cfg = {0};
+cfg.baud         = 9600;
+cfg.timeout_mode = SerialTimeoutMode_Timeout;
+cfg.timeout_ms   = 1000;
 SerialPort   dev = serial_open(STR("COM10"), cfg);
 if (!serial_valid(dev)) { /* port missing or busy */ }
 
