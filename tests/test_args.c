@@ -527,6 +527,31 @@ static void test_validate_catches_null_out_and_bad_kind(void)
     arena_release(arena);
 }
 
+static void test_validate_catches_positional_flag(void)
+{
+    SECTION("args_validate: a positional ArgSpec of kind ArgKind_Flag is caught -- args_parse's Flag case would always set it true and discard the actual token");
+
+    BasicArgs args = {0};
+    ArgSpec bad[] = {
+        { STR("INPUT"), {0}, ArgKind_Flag, &args.help, {0}, STR(""), true, false }, /* positional, but Flag-kind */
+    };
+    Arena* arena = arena_alloc(KB(4));
+    str8 err = {0};
+    ASSERT(!args_validate(bad, ARRAY_COUNT(bad), arena, &err));
+    ASSERT(err.size > 0);
+
+    /* Flag-kind is fine for a non-positional (keyword) option -- only the combination
+       with positional is rejected */
+    ArgSpec ok[] = {
+        { STR("--help"), {0}, ArgKind_Flag, &args.help, {0}, STR("") },
+    };
+    err = (str8){0};
+    ASSERT(args_validate(ok, ARRAY_COUNT(ok), arena, &err));
+    ASSERT(err.size == 0);
+
+    arena_release(arena);
+}
+
 static void test_validate_catches_optional_before_required_positional(void)
 {
     SECTION("args_validate: a required positional after an optional one is caught (ordinal matching can't tell them apart)");
@@ -571,6 +596,7 @@ static TestCase g_cases[] = {
     {"has_option_prescan",             test_has_option_prescan},
     {"validate_duplicate_name",        test_validate_catches_duplicate_name},
     {"validate_null_out_and_bad_kind", test_validate_catches_null_out_and_bad_kind},
+    {"validate_positional_flag",       test_validate_catches_positional_flag},
     {"validate_optional_before_required_positional", test_validate_catches_optional_before_required_positional},
 };
 

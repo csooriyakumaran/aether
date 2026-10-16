@@ -2885,6 +2885,12 @@ AETHER_API b8 args_validate(ArgSpec* specs, u64 count, Arena* arena, str8* out_e
             return false;
         }
 
+        if (a->positional && a->kind == ArgKind_Flag)
+        {
+            if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT ": a positional argument cannot be ArgKind_Flag -- args_parse's Flag case always sets the output true and discards the token", STR8_ARG(a->name));
+            return false;
+        }
+
         if (a->positional)
         {
             if (!a->required) seen_optional_positional = true;

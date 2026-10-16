@@ -54,7 +54,7 @@ set(ARGS_TEST_CASES
     missing_value_for_option empty_inline_value_falls_through unexpected_positional required_positional
     required_keyword was_set_tracking was_set_reset_across_calls err_out_cleared_on_success
     has_flag_prescan has_option_prescan validate_duplicate_name validate_null_out_and_bad_kind
-    validate_optional_before_required_positional
+    validate_positional_flag validate_optional_before_required_positional
 )
 
 foreach(case ${ARGS_TEST_CASES})

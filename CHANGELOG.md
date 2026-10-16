@@ -17,6 +17,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- aether: `args_validate` now rejects an `ArgSpec` with `positional = true`
+  and `kind = ArgKind_Flag`. Both `args_parse` and `args_validate`
+  previously accepted this combination, but `args_parse`'s parse switch
+  unconditionally sets the output `true` whenever that positional slot is
+  reached (`case ArgKind_Flag: *(b8*)spec->out = true;`), silently
+  discarding the actual token the positional was supposed to capture.
+  New `validate_positional_flag` case in `tests/test_args.c`, wired into
+  `ARGS_TEST_CASES` — also confirms `Flag`-kind stays accepted for a
+  non-positional (keyword) option, since only the combination is wrong.
 - aether: `high_res_timer_alloc`/`high_res_timer_set_rate` now `FATAL` when
   the requested `hz` rounds `period_ticks` to `0` against the current
   `os_time_frequency()`, instead of only asserting `hz > 0` (which says
