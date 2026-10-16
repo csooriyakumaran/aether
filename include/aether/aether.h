@@ -252,7 +252,7 @@ extern "C"
 {
 #endif // AETHER_LANG_CPP
 
-/*-------- C O N F I G -------------------------------------------------------*/
+/*-------- C O N F I G ------------------------------------------------------*/
 
 #if AETHER_COMPILER_MSVC
     #define AETHER_DEBUG_BREAK() __debugbreak()
@@ -286,7 +286,7 @@ extern "C"
     #define AETHER_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg) /* C11 */
 #endif // AETHER_LANG_CPP
 
-/*----------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
 
 #ifndef AETHER_ENABLE_ASSERTS
     #if AETHER_BUILD_DEBUG
@@ -383,7 +383,7 @@ extern "C"
     #endif // MAX
 #endif // AETHER_NO_MINMAX
 
-/*-------- T Y P E S ---------------------------------------------------------*/
+/*-------- T Y P E S --------------------------------------------------------*/
 
 typedef signed char         i8; AETHER_STATIC_ASSERT(sizeof(i8)  == 1, "i8  != 1 byte");
 typedef signed short       i16; AETHER_STATIC_ASSERT(sizeof(i16) == 2, "i16 != 2 bytes");
@@ -404,7 +404,7 @@ typedef u32                b32; AETHER_STATIC_ASSERT(sizeof(b32) == 4, "b32 != 4
 typedef struct bytes {       u8* data; u64 size; } bytes;
 typedef struct view  { const u8* data; u64 size; } view;
 
-/*-------- A T O M I C S  ----------------------------------------------------*/
+/*-------- A T O M I C S ----------------------------------------------------*/
 
 AETHER_STATIC_ASSERT(sizeof(void*) == 8, "aether atomics require a 64-bit target");
 
@@ -465,7 +465,7 @@ static inline b8 atomic_cas_u64(u64* p, u64 expected, u64 desired)
 #endif 
 }
 
-/*----------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------*/
 
 #define BIT8(x)  ((u8)  (1u   << (x)))
 #define BIT16(x) ((u16) (1u   << (x)))
@@ -479,7 +479,7 @@ static inline b8 atomic_cas_u64(u64* p, u64 expected, u64 desired)
 #define GB(n) (((u64)(n)) << 30)
 #define TB(n) (((u64)(n)) << 40)
 
-/*-------- A R E N A S -------------------------------------------------------*/
+/*-------- A R E N A S ------------------------------------------------------*/
 
 #define AETHER_ARENA_HEADER_SIZE 128
 
@@ -547,7 +547,7 @@ typedef struct ArenaTemp {
 AETHER_API ArenaTemp arena_begin_temp(Arena* arena);
 AETHER_API void      arena_end_temp(ArenaTemp temp);
 
-/* -------- R I N G / C I R C U L A R - B U F F E R S ---------------------- */
+/*-------- R I N G / C I R C U L A R - B U F F E R S ------------------------*/
 
 /* - Ring buffers are safe for exactly one producer thread and one consumer thread
  *   more of either requires external synchronization
@@ -576,7 +576,7 @@ AETHER_API void       ring_buffer_cancel_reservation(RingBuffer* rb);
 AETHER_API b8         ring_buffer_commit(RingBuffer* rb, u64 len);
 AETHER_API b8         ring_buffer_write(RingBuffer* rb, const void* src, u64 len);
 
-/*-------- S T R I N G S -----------------------------------------------------*/
+/*-------- S T R I N G S ----------------------------------------------------*/
 
 /* note(chris):
  *    - str8's pushed onto an arena will be nul-terminated by convention
@@ -585,7 +585,7 @@ AETHER_API b8         ring_buffer_write(RingBuffer* rb, const void* src, u64 len
  *    of nul-termination
  */
 typedef struct str8 { const u8* data; u64 size; } str8;
-static inline  str8 str8_from_view(view v){ str8 s = {v.data, v.size}; return s; }
+static inline str8 str8_from_view(view v){ str8 s = {v.data, v.size}; return s; }
 
 /*STRING LITERALS ONLY: decays silently on pointers */
 #define STR(s) (AETHER_LITERAL(str8){ (const u8*)(s), sizeof(s) - 1 })
@@ -716,11 +716,7 @@ AETHER_API u8         utf8_codepoint_width(u32 codepoint);
  *  - does not split on new-lines */
 AETHER_API u32        utf8_width(str8 s);
 
-// --- paths ---
-// todo(chris): do this
-
-
-/* ------- C L I - A R G U M E N T S --------------------------------------- */
+/*-------- C L I - A R G U M E N T S ----------------------------------------*/
 
 typedef u8 ArgKind;
 enum ArgKind_
@@ -757,7 +753,7 @@ AETHER_API b8   args_parse(int argc, char** argv, ArgSpec* specs, u64 count, Are
 AETHER_API b8   args_validate(ArgSpec* specs, u64 count, Arena* arena, str8* out_err);
 AETHER_API str8 args_help_text(Arena* arena, str8 prog_name, ArgSpec* specs, u64 count);
 
-/* ------- F I L E - I / O ------------------------------------------------- */
+/*-------- F I L E - I / O --------------------------------------------------*/
 
 AETHER_API bytes file_read(Arena* arena, const char* path);
 AETHER_API u64   file_write(const char* path, const void* src, u64 len);
@@ -786,7 +782,7 @@ AETHER_API b8         file_stream_close(FileStream* fs);
 AETHER_API str8       file_stream_fmt(FileStream* fs, u64 cap, const char* fmt, ...);
 
 
-/* ------- T I M E R S ----------------------------------------------------- */
+/*-------- T I M E R S ------------------------------------------------------*/
 AETHER_API u64 time_mark(void);
 AETHER_API f64 time_elapsed_sec(u64 start, u64 end);
 
@@ -821,12 +817,11 @@ AETHER_API datetime datetime_now(void);
 AETHER_API datetime datetime_from_ns_since_epoch(u64 ns);
 AETHER_API b8       datetime_to_ns_since_epoch(datetime dt, u64* out);
 
-/* ------- T H R E A D S  -------------------------------------------------- */
+/*-------- T H R E A D S ----------------------------------------------------*/
 
 typedef int (*thread_fn)(void* user);
 typedef struct Thread { void* handle; } Thread;
 
-//todo(chris): should these be typedef u8 if we're not treating them like a bit feild?
 typedef u8 ThreadPriority;
 enum ThreadPriority_
 {
@@ -842,7 +837,6 @@ AETHER_API b8     thread_set_affinity(Thread* t, u32 core_index);
 AETHER_API void   thread_yield(void);
 AETHER_API void   thread_sleep_ms(u32 ms);
 
-//todo(chris): should these be typedef u8 if we're not treating them like a bit feild?
 typedef u8 ProcessPriorityClass;
 enum ProcessPriorityClass_
 {
@@ -853,7 +847,7 @@ enum ProcessPriorityClass_
 
 AETHER_API b8     process_set_priority_class(ProcessPriorityClass c);
 
-/* ------- C O N S O L E - S I G N A L - H A N D L I N G ------------------- */
+/*-------- C O N S O L E - S I G N A L - H A N D L I N G --------------------*/
 
 typedef void (*console_signal_fn)(void* user);
 
@@ -1437,7 +1431,7 @@ internal void os_console_signal_uninstall(void)
 /* --- A R E N A S --------------------------------------------------------- */
 /* ------------------------------------------------------------------------- */
 
-internal u64 round_up_power_2(u64 n)
+internal u64 round_up_power_2_(u64 n)
 {
     if (n == 0) return 1;
     n--;
@@ -1450,18 +1444,18 @@ internal u64 round_up_power_2(u64 n)
     return n + 1;
 }
 
-internal u64 align_forward_u64(u64 value, u64 align)
+internal u64 align_forward_u64_(u64 value, u64 align)
 {
     AETHER_ASSERT_(align != 0);
     AETHER_ASSERT_((align & (align - 1)) == 0);
 
     u64 mask = align - 1;
-    if (value > AETHER_U64_MAX_ - mask) { AETHER_ASSERT_(!"align_forward_u64 overflow"); return AETHER_U64_MAX_; }
+    if (value > AETHER_U64_MAX_ - mask) { AETHER_ASSERT_(!"align_forward_u64_ overflow"); return AETHER_U64_MAX_; }
 
     return (value + mask) & ~mask;
 }
 
-internal void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
+internal void arena_commit_page_or_chunk_(Arena* arena, u64 new_pos)
 {
     if (new_pos <= arena->commit_size)
         return;
@@ -1472,9 +1466,9 @@ internal void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
     if ((arena->flags & ArenaFlags_CommitChunked) != 0)
     {
         u32 page_granularity = arena->granularity > 0 ? arena->granularity : 1;
-        new_commit_size = align_forward_u64(new_pos, pagesize * page_granularity);
+        new_commit_size = align_forward_u64_(new_pos, pagesize * page_granularity);
     } else {
-        new_commit_size = align_forward_u64(new_pos, pagesize);
+        new_commit_size = align_forward_u64_(new_pos, pagesize);
     }
 
     new_commit_size = AETHER_MIN_(new_commit_size, arena->reserved_size);
@@ -1486,13 +1480,13 @@ internal void arena_commit_page_or_chunk(Arena* arena, u64 new_pos)
 
 }
 
-internal void arena_decommit_tail(Arena* arena, u64 new_pos)
+internal void arena_decommit_tail_(Arena* arena, u64 new_pos)
 {
     if ((arena->flags & ArenaFlags_Decommit) == 0)
         return;
 
     u64 pagesize = os_mem_pagesize();
-    u64 new_commit_size = align_forward_u64(new_pos, pagesize);
+    u64 new_commit_size = align_forward_u64_(new_pos, pagesize);
 
     // We don't have a tail
     if (new_commit_size > arena->commit_size)
@@ -1515,8 +1509,8 @@ AETHER_API Arena* arena_alloc_ex(u64 reserve_size, u64 initial_commit_size, u32 
 
     u64 pagesize = os_mem_pagesize();
 
-    reserve_size         = align_forward_u64(reserve_size, pagesize);
-    initial_commit_size  = align_forward_u64(initial_commit_size, pagesize);
+    reserve_size         = align_forward_u64_(reserve_size, pagesize);
+    initial_commit_size  = align_forward_u64_(initial_commit_size, pagesize);
 
     if (initial_commit_size > reserve_size)
         initial_commit_size = reserve_size;
@@ -1567,7 +1561,7 @@ AETHER_API void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
     if (!arena) return NULL;
     AETHER_ASSERT_(arena->pos <= arena->reserved_size);
 
-    u64 aligned_pos = align_forward_u64(arena->pos, align);
+    u64 aligned_pos = align_forward_u64_(arena->pos, align);
 
     /* computed up front, guarded on its own, so `size > remaining` below is
        safe from unsigned underflow no matter how these checks get reordered */
@@ -1582,7 +1576,7 @@ AETHER_API void* arena_push(Arena* arena, u64 size, u64 align, ArenaZero zero)
     AETHER_ASSERT_(new_pos <= arena->reserved_size);
 
     if (new_pos > arena->commit_size)
-        arena_commit_page_or_chunk(arena, new_pos);
+        arena_commit_page_or_chunk_(arena, new_pos);
 
     arena->pos = new_pos;
     void* result = (u8*)arena + aligned_pos;
@@ -1604,7 +1598,7 @@ AETHER_API void arena_pop_to(Arena* arena, u64 pos)
         memset((u8*)arena + pos, 0xDD, arena->pos - pos);
 
     if ((arena->flags & ArenaFlags_Decommit) != 0)
-        arena_decommit_tail(arena, pos);
+        arena_decommit_tail_(arena, pos);
 
     arena->pos = pos;
 }
@@ -1642,7 +1636,7 @@ AETHER_API void arena_end_temp(ArenaTemp temp)
 }
 
 /* ------------------------------------------------------------------------- */
-/* --- R I N G / B U F F E R S --------------------------------------------- */
+/* --- R I N G / C I R C U L A R - B U F F E R S --------------------------- */
 /* ------------------------------------------------------------------------- */
 
 AETHER_API RingBuffer ring_buffer_alloc(u64 size)
@@ -1651,7 +1645,7 @@ AETHER_API RingBuffer ring_buffer_alloc(u64 size)
 
     RingBuffer rb = {0};
 
-    u64 size_pow2        = round_up_power_2(size);
+    u64 size_pow2        = round_up_power_2_(size);
     u64 page_granularity = os_mem_pagegranularity(); /* should already be power of 2 */
     u64 ring_size        = AETHER_MAX_(size_pow2, page_granularity);
 
@@ -1806,7 +1800,7 @@ internal u64 fmt_raw_(void* dst, u64 cap, const char* fmt, va_list args)
     return ( n < 0 ) ? 0 : (u64)n;
 }
 
-internal str8 str8_fmtv(bytes dst, const char* fmt, va_list args)
+internal str8 str8_fmtv_(bytes dst, const char* fmt, va_list args)
 {
     AETHER_ASSERT_( dst.data != NULL || dst.size == 0);
     u64 n = fmt_raw_(dst.data, dst.size, fmt, args);
@@ -1816,7 +1810,7 @@ internal str8 str8_fmtv(bytes dst, const char* fmt, va_list args)
     return result;
 }
 
-internal str8 str8_push_fmtv(Arena* arena, const char* fmt, va_list args)
+internal str8 str8_push_fmtv_(Arena* arena, const char* fmt, va_list args)
 {
     va_list args_copy;
     va_copy(args_copy, args);
@@ -1836,7 +1830,7 @@ internal str8 str8_push_fmtv(Arena* arena, const char* fmt, va_list args)
     return result;
 }
 
-internal char* c_str_push_fmtv(Arena* arena, const char* fmt, va_list args)
+internal char* c_str_push_fmtv_(Arena* arena, const char* fmt, va_list args)
 {
     va_list args_copy;
     va_copy(args_copy, args);
@@ -1925,7 +1919,7 @@ AETHER_API str8 str8_fmt(bytes dst, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    str8 result = str8_fmtv(dst, fmt, args);
+    str8 result = str8_fmtv_(dst, fmt, args);
     va_end(args);
     return result;
 }
@@ -1934,7 +1928,7 @@ AETHER_API str8 str8_push_fmt(Arena* arena, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    str8 result = str8_push_fmtv(arena, fmt, args);
+    str8 result = str8_push_fmtv_(arena, fmt, args);
     va_end(args);
     return result;
 }
@@ -1943,7 +1937,7 @@ AETHER_API char* c_str_push_fmt(Arena* arena, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    char* dst = c_str_push_fmtv(arena, fmt, args);
+    char* dst = c_str_push_fmtv_(arena, fmt, args);
     va_end(args);
     return dst;
 }
@@ -1984,19 +1978,19 @@ AETHER_API str8 str8_drop(str8 s, u64 n)
     return str8_slice(s, 0, s.size - n);
 }
 
-internal b8 char_is_ws(u8 c)    { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
-internal b8 char_is_upper(u8 c) { return ('A' <= c && c <= 'Z'); }
-internal b8 char_is_lower(u8 c) { return ('a' <= c && c <= 'z'); }
+internal b8 char_is_ws_(u8 c)    { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+internal b8 char_is_upper_(u8 c) { return ('A' <= c && c <= 'Z'); }
+internal b8 char_is_lower_(u8 c) { return ('a' <= c && c <= 'z'); }
 
 AETHER_API str8 str8_trim(str8 s)
 {
     AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
 
     u64 start = 0;
-    while (start < s.size && char_is_ws(s.data[start])) start++;
+    while (start < s.size && char_is_ws_(s.data[start])) start++;
 
     u64 end   = s.size;
-    while (end > start && char_is_ws(s.data[end-1])) end--;
+    while (end > start && char_is_ws_(s.data[end-1])) end--;
 
     return str8_slice(s, start, end);
 }
@@ -2006,7 +2000,7 @@ AETHER_API str8 str8_trim_left(str8 s)
     AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
 
     u64 start = 0;
-    while (start < s.size && char_is_ws(s.data[start])) start++;
+    while (start < s.size && char_is_ws_(s.data[start])) start++;
 
     return str8_slice(s, start, s.size);
 }
@@ -2016,7 +2010,7 @@ AETHER_API str8 str8_trim_right(str8 s)
     AETHER_ASSERT_(s.data != NULL || s.size == 0); /* NULL data with size > 0 is a caller bug */
 
     u64 end = s.size;
-    while ( end > 0 && char_is_ws(s.data[end-1])) end--;
+    while ( end > 0 && char_is_ws_(s.data[end-1])) end--;
 
     return str8_slice(s, 0, end);
 }
@@ -2043,8 +2037,8 @@ AETHER_API b8 str8_eq_nocase(str8 a, str8 b)
     u8 c1, c2;
     for (u64 i = 0; i < a.size; ++i)
     {
-        c1 = char_is_upper(a.data[i]) ? a.data[i] + 32 : a.data[i];
-        c2 = char_is_upper(b.data[i]) ? b.data[i] + 32 : b.data[i];
+        c1 = char_is_upper_(a.data[i]) ? a.data[i] + 32 : a.data[i];
+        c2 = char_is_upper_(b.data[i]) ? b.data[i] + 32 : b.data[i];
         if (c1 != c2) return false;
     }
     return true;
@@ -2212,9 +2206,9 @@ AETHER_API void str8_list_push(Arena* arena, Str8List* list, str8 v)
     list->total_len += v.size;
 }
 
-internal void str8_list_push_fmtv(Arena* arena, Str8List* list, const char* fmt, va_list args)
+internal void str8_list_push_fmtv_(Arena* arena, Str8List* list, const char* fmt, va_list args)
 {
-    str8 v = str8_push_fmtv(arena, fmt, args);
+    str8 v = str8_push_fmtv_(arena, fmt, args);
     str8_list_push(arena, list, v);
 }
 
@@ -2222,7 +2216,7 @@ AETHER_API void str8_list_push_fmt(Arena* arena, Str8List* list, const char* fmt
 {
     va_list args;
     va_start(args, fmt);
-    str8_list_push_fmtv(arena, list, fmt, args);
+    str8_list_push_fmtv_(arena, list, fmt, args);
     va_end(args);
 }
 
@@ -2282,7 +2276,7 @@ AETHER_API str8 str8_to_upper(Arena* arena, str8 s)
     u8* data = (u8*)arena_push_or_fatal_(arena, s.size + 1, 1);
 
     for (u64 i = 0; i < s.size; ++i)
-        data[i] = char_is_lower(s.data[i]) ? s.data[i] - 32 : s.data[i];
+        data[i] = char_is_lower_(s.data[i]) ? s.data[i] - 32 : s.data[i];
 
     data[size] = '\0';
 
@@ -2298,7 +2292,7 @@ AETHER_API str8 str8_to_lower(Arena* arena, str8 s)
     u8* data = (u8*)arena_push_or_fatal_(arena, s.size + 1, 1);
 
     for (u64 i = 0; i < s.size; ++i)
-        data[i] = char_is_upper(s.data[i]) ? s.data[i] + 32: s.data[i];
+        data[i] = char_is_upper_(s.data[i]) ? s.data[i] + 32: s.data[i];
 
     data[size] = '\0';
 
@@ -2340,6 +2334,44 @@ AETHER_API str8 str8_replace(Arena* arena, str8 s, str8 old, str8 target)
 }
 
 
+AETHER_API b8 str8_to_int(str8 s, i64 min, i64 max, i64* out)
+{
+    i64 v;
+    if (!str8_to_i64(s, &v)) return false;
+    if (v < min || v > max) return false;
+
+    *out = v;
+    return true;
+}
+
+
+AETHER_API b8 str8_to_u8(str8 s,  u8* out)
+{
+    i64 v;
+    if (!str8_to_int(s, 0, AETHER_U8_MAX_, &v)) return false;
+
+    *out = (u8)v;
+    return true;
+}
+
+AETHER_API b8 str8_to_u16(str8 s, u16* out)
+{
+    i64 v;
+    if (!str8_to_int(s, 0, AETHER_U16_MAX_, &v)) return false;
+
+    *out = (u16)v;
+    return true;
+}
+
+AETHER_API b8 str8_to_u32(str8 s, u32* out)
+{
+    i64 v;
+    if (!str8_to_int(s, 0, AETHER_U32_MAX_, &v)) return false;
+
+    *out = (u32)v;
+    return true;
+}
+
 AETHER_API b8 str8_to_u64(str8 s, u64* out)
 {
     if (s.size == 0) return false;
@@ -2380,89 +2412,6 @@ AETHER_API b8 str8_to_u64(str8 s, u64* out)
     return true;
 }
 
-AETHER_API b8 str8_to_i64(str8 s, i64* out)
-{
-    if (s.size == 0) return false;
-
-    u64 i = 0;
-    i64 sign = 1;
-
-    if      (s.data[0] == '-') { sign = -1; i = 1 ;}
-    else if (s.data[0] == '+') { i = 1; }
-
-    int base = 10;
-    if (s.size >= i + 2 && s.data[i] == '0')
-    {
-        if      (s.data[i+1] == 'x' || s.data[i+1] == 'X') { base = 16; i += 2; }
-        else if (s.data[i+1] == 'o' || s.data[i+1] == 'O') { base = 8;  i += 2; }
-        else if (s.data[i+1] == 'b' || s.data[i+1] == 'B') { base = 2;  i += 2; }
-    }
-
-    u64 v = 0;
-    b8 has_digit = false;
-    for (; i < s.size; ++i) 
-    {
-        u8 c = s.data[i];
-        u8 d;
-
-        if      (c >= '0' && c <= '9') d = c - '0';
-        else if (c >= 'a' && c <= 'z') d = 10 + (c - 'a');
-        else if (c >= 'A' && c <= 'Z') d = 10 + (c - 'A');
-        else return false;
-
-        if (d >= (u8)base) return false; /* rejects e.g. '2' in a 0b literal, 'g' in hex, etx. */
-
-        if ( v > (U64_MAX - d) / (u64)base ) return false;
-        v = v * (u64)base + d;
-        has_digit = true;
-    }
-    
-    if ( !has_digit ) return false;
-    if ( sign ==  1 && v > (u64)I64_MAX)     return false;
-    if ( sign == -1 && v > (u64)I64_MAX + 1) return false;
-
-    *out = (i64)(sign == -1 ? (u64)0 - v : v);
-    return true;
-}
-
-AETHER_API b8 str8_to_int(str8 s, i64 min, i64 max, i64* out)
-{
-    i64 v;
-    if (!str8_to_i64(s, &v)) return false;
-    if (v < min || v > max) return false;
-
-    *out = v;
-    return true;
-}
-
-
-AETHER_API b8 str8_to_u8(str8 s,  u8* out)
-{
-    i64 v;
-    if (!str8_to_int(s, 0, AETHER_U8_MAX_, &v)) return false;
-
-    *out = (u8)v;
-    return true;
-}
-
-AETHER_API b8 str8_to_u16(str8 s, u16* out)
-{
-    i64 v;
-    if (!str8_to_int(s, 0, AETHER_U16_MAX_, &v)) return false;
-
-    *out = (u16)v;
-    return true;
-}
-
-AETHER_API b8 str8_to_u32(str8 s, u32* out)
-{
-    i64 v;
-    if (!str8_to_int(s, 0, AETHER_U32_MAX_, &v)) return false;
-
-    *out = (u32)v;
-    return true;
-}
-
 AETHER_API b8 str8_to_i8(str8 s,  i8* out)
 {
     i64 v;
@@ -2487,6 +2436,51 @@ AETHER_API b8 str8_to_i32(str8 s, i32* out)
     if (!str8_to_int(s, AETHER_I32_MIN_, AETHER_I32_MAX_, &v)) return false;
 
     *out = (i32)v;
+    return true;
+}
+
+AETHER_API b8 str8_to_i64(str8 s, i64* out)
+{
+    if (s.size == 0) return false;
+
+    u64 i = 0;
+    i64 sign = 1;
+
+    if      (s.data[0] == '-') { sign = -1; i = 1 ;}
+    else if (s.data[0] == '+') { i = 1; }
+
+    int base = 10;
+    if (s.size >= i + 2 && s.data[i] == '0')
+    {
+        if      (s.data[i+1] == 'x' || s.data[i+1] == 'X') { base = 16; i += 2; }
+        else if (s.data[i+1] == 'o' || s.data[i+1] == 'O') { base = 8;  i += 2; }
+        else if (s.data[i+1] == 'b' || s.data[i+1] == 'B') { base = 2;  i += 2; }
+    }
+
+    u64 v = 0;
+    b8 has_digit = false;
+    for (; i < s.size; ++i)
+    {
+        u8 c = s.data[i];
+        u8 d;
+
+        if      (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'z') d = 10 + (c - 'a');
+        else if (c >= 'A' && c <= 'Z') d = 10 + (c - 'A');
+        else return false;
+
+        if (d >= (u8)base) return false; /* rejects e.g. '2' in a 0b literal, 'g' in hex, etx. */
+
+        if ( v > (U64_MAX - d) / (u64)base ) return false;
+        v = v * (u64)base + d;
+        has_digit = true;
+    }
+
+    if ( !has_digit ) return false;
+    if ( sign ==  1 && v > (u64)I64_MAX)     return false;
+    if ( sign == -1 && v > (u64)I64_MAX + 1) return false;
+
+    *out = (i64)(sign == -1 ? (u64)0 - v : v);
     return true;
 }
 
@@ -3085,9 +3079,9 @@ AETHER_API view file_map(const char* path)
     return v;
 }
 
-AETHER_API void file_unmap(view v)
+AETHER_API void file_unmap(view map)
 {
-    os_file_unmap(v.data, v.size);
+    os_file_unmap(map.data, map.size);
 }
 
 AETHER_API FileStream file_stream_open(const char* path, u8* buf, u64 buf_cap)
@@ -3100,14 +3094,14 @@ AETHER_API FileStream file_stream_open(const char* path, u8* buf, u64 buf_cap)
     return fs;
 }
 
-AETHER_API b8 file_stream_valid(FileStream* fs)
-{
-    return fs->handle != NULL;
-}
-
 AETHER_API b8 file_stream_ok(FileStream* fs)
 {
     return !fs->err;
+}
+
+AETHER_API b8 file_stream_valid(FileStream* fs)
+{
+    return fs->handle != NULL;
 }
 
 AETHER_API bytes file_stream_reserve(FileStream* fs, u64 len)
@@ -3161,7 +3155,7 @@ AETHER_API str8 file_stream_fmt(FileStream* fs, u64 cap, const char* fmt, ...)
 
     va_list args;
     va_start(args, fmt);
-    str8 result = str8_fmtv(dst, fmt, args);
+    str8 result = str8_fmtv_(dst, fmt, args);
     va_end(args);
 
     file_stream_commit(fs, result.size);
@@ -3169,7 +3163,7 @@ AETHER_API str8 file_stream_fmt(FileStream* fs, u64 cap, const char* fmt, ...)
 }
 
 /* ------------------------------------------------------------------------- */
-/* --- T I M I N G --------------------------------------------------------- */
+/* --- T I M E R S --------------------------------------------------------- */
 /* ------------------------------------------------------------------------- */
 
 AETHER_API u64 time_mark(void)
@@ -3318,6 +3312,11 @@ AETHER_API u64 wall_clock_ns(void)
     return os_wall_clock_ns();
 }
 
+AETHER_API datetime datetime_now(void)
+{
+    return datetime_from_ns_since_epoch(wall_clock_ns());
+}
+
 AETHER_API datetime datetime_from_ns_since_epoch(u64 ns)
 {
     u64 secs = ns / 1000000000ull;
@@ -3358,11 +3357,6 @@ AETHER_API b8 datetime_to_ns_since_epoch(datetime dt, u64* out)
 
     *out = secs * 1000000000ull + dt.ns;
     return true;
-}
-
-AETHER_API datetime datetime_now(void)
-{
-    return datetime_from_ns_since_epoch(wall_clock_ns());
 }
 
 /*---------------------------------------------------------------------------*/
@@ -3414,7 +3408,7 @@ AETHER_API b8 process_set_priority_class(ProcessPriorityClass c)
 }
 
 /*---------------------------------------------------------------------------*/
-/* --- C O N S O L E - S I G N A L S ----------------------------------------*/
+/* --- C O N S O L E - S I G N A L - H A N D L I N G ----------------------- */
 /*---------------------------------------------------------------------------*/
 
 AETHER_API b8 console_signal_install(console_signal_fn fn, void* user)

@@ -504,7 +504,7 @@ static void test_overflow_guard(void)
 
 static void test_align_forward_overflow(void)
 {
-    SECTION("align_forward_u64: value near U64_MAX is rejected instead of silently wrapping");
+    SECTION("align_forward_u64_: value near U64_MAX is rejected instead of silently wrapping");
 
 #if AETHER_ENABLE_ASSERTS
     printf("   skipped: ASSERT() traps on overflow in this build (AETHER_ENABLE_ASSERTS=1);\n"
@@ -512,11 +512,11 @@ static void test_align_forward_overflow(void)
 #else
     /* value + (align-1) would overflow u64 -- used to wrap to a small,
        wrong result with no diagnostic; now saturates to U64_MAX instead. */
-    u64 wrapped = align_forward_u64(U64_MAX - 10, 4096);
+    u64 wrapped = align_forward_u64_(U64_MAX - 10, 4096);
     ASSERT(wrapped == U64_MAX);
 
     /* a value that doesn't overflow is unaffected */
-    u64 ok = align_forward_u64(4097, 4096);
+    u64 ok = align_forward_u64_(4097, 4096);
     ASSERT(ok == 8192);
 #endif
 }

@@ -13,6 +13,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - aether: CLI argument parsing — `ArgSpec`/`ArgKind`, `args_parse`, `args_validate`, `args_has_flag`, `args_help_text`. A flat `ArgSpec[]` table drives parsing of positional and `--name`/`-alias` keyword options (`--name=value` and `--name value` both accepted), covering `Flag`, `Str`, and every integer/float kind the existing `str8_to_*` family already supports (`U8`/`U16`/`U32`/`U64`, `I8`/`I16`/`I32`/`I64`, `F64`). An empty `--name=` is treated the same as no `=` at all, falling through to the next `argv` element rather than being accepted as an explicit empty value — matches what a real shell already produces from an unquoted `--name= value` typo (the space ends that `argv` element right there), instead of either hard-failing the whole parse for a numeric kind or silently misreading the real value as an unrelated positional for a `Str` one. Each entry carries `required` (checked once after the full `argv` pass, so one missing argument can't mask another behind it) and `was_set` (written by `args_parse`; distinguishes "the user explicitly passed this" from "`out` still holds whatever default the caller pre-filled it with" — needed since `0` is a legitimate value for every numeric kind, not an implicit "unset" sentinel). Error detail is opt-in and arena-owned rather than a fixed buffer or global state: `args_parse(..., Arena* arena, str8* out_err)`, both nullable, matching the header's existing `out`/`out_*` convention — the arena is touched only on a failure path, and `*out_err` is always reset to `{0}` at the start of a call so stale text from a previous call can't leak through on a later success. `args_validate(specs, count, arena, out_err)` is a separate, opt-in check against the `ArgSpec[]` table itself rather than any parsed input — duplicate `name`/`alias` across entries, a `NULL` `out` pointer, an out-of-range `kind`, or a required positional following an optional one (ordinal positional matching can't tell those apart at parse time) — meant to catch authoring mistakes once, not to run on every real invocation. `args_has_flag(argc, argv, name, alias)` is a raw `argv` presence check with no `ArgSpec` dependency, for a `--help`/`--version` escape hatch that has to win regardless of what else is wrong on the command line — checked before the real `args_parse` call, not folded into it. `args_has_option(argc, argv, name, alias, out_val)` is its value-bearing sibling, same no-`ArgSpec` scope, but hands back the raw `str8` value instead of just a `b8` — no `ArgKind`-style conversion or validation, that's what `args_parse` is for; the caller runs their own `str8_to_*` on the result. An empty or whitespace-only value (`--name=`, `--name= `) is treated the same as `--name` with nothing after it at all — not found; an empty `--name=` specifically still falls through to check the next `argv` element rather than giving up the moment it sees the `=`, since that's exactly what a real shell already produces from an unquoted `--name= value` typo (the space ends the token right there). `args_help_text(arena, prog_name, specs, count)` renders a docopt-style usage synopsis (`<REQUIRED>` / `[<optional>]` / `[--flag]` / `[--name=<VALUE>]`, placeholders derived from the option's `ArgKind` and upper-cased unless the caller overrides `metavar`) followed by `ARGUMENTS`/`FLAGS`/`OPTIONS` sections, with `(required)` called out explicitly in the detailed listing.
 
 ### Changed
+- aether: cosmetic/structural cleanup, no behavior change. Unified the
+  declaration region's three banner styles onto one convention, and
+  every banner in the file — declaration and implementation regions
+  alike, titled and plain-divider — is now a consistent 79 characters
+  wide (the file's actual pre-existing dominant width; two plain
+  dividers and all twelve declaration-region title banners were 80,
+  one character over). Fixed banner-text drift between declaration and
+  implementation
+  (`RING/BUFFERS`→`RING/CIRCULAR-BUFFERS`, `TIMING`→`TIMERS`,
+  `CONSOLE-SIGNALS`→`CONSOLE-SIGNAL-HANDLING`, including a missing
+  trailing space before `*/`); reordered three implementations to match
+  their declaration order (`str8_to_int`/typed-wrapper family,
+  `file_stream_ok`/`file_stream_valid`, `datetime_now`); applied the
+  trailing-underscore internal-helper convention to 11 non-compliant
+  functions (`round_up_power_2`, `align_forward_u64`,
+  `arena_commit_page_or_chunk`, `arena_decommit_tail`, `str8_fmtv`,
+  `str8_push_fmtv`, `c_str_push_fmtv`, `str8_list_push_fmtv`,
+  `char_is_ws`, `char_is_upper`, `char_is_lower` — all gained a trailing
+  `_`, with every call site updated, including `tests/test_arenas.c`'s
+  direct call to `align_forward_u64`); removed two duplicate, already-
+  answered `//todo(chris)` comments (with a "feild" typo) sitting above
+  `ThreadPriority`/`ProcessPriorityClass`; fixed `file_unmap`'s
+  declaration/definition parameter name mismatch (`map` vs `v`); fixed
+  `str8_from_view`'s double-space typo; removed a dead `// --- paths
+  ---` stub with nothing under it.
 - docs: `docs/cereal-design.md` is cross-linked to `hermes.h` as its
   shipped form — its R1/R2/R3/R5/R6/R7 requirements map directly onto
   `hermes.h`'s shape (the pre-rename design doc for what became `hermes`,
