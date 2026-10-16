@@ -3176,6 +3176,9 @@ AETHER_API HighResTimer high_res_timer_alloc(f64 hz)
 
     t.os_timer      = os_timer;
     t.period_ticks  = (u64)((f64)os_time_frequency() / hz + 0.5);
+    /* an hz high enough relative to os_time_frequency() rounds period_ticks to 0;
+       the next wait() divides by it unconditionally -- fail loudly here instead */
+    if (t.period_ticks == 0) { FATAL("high_res_timer_alloc: hz too high for this timer's tick resolution"); return t; }
     t.spin_margin   = AETHER_MIN_(default_spin, t.period_ticks / 2);
 
     return t;
@@ -3187,7 +3190,9 @@ AETHER_API void high_res_timer_set_rate(HighResTimer* t, f64 hz)
     if (!t || !t->os_timer) return;
 
     u64 freq = os_time_frequency();
-    t->period_ticks  = (u64)((f64)freq / hz + 0.5);
+    u64 period_ticks = (u64)((f64)freq / hz + 0.5);
+    if (period_ticks == 0) { FATAL("high_res_timer_set_rate: hz too high for this timer's tick resolution"); return; }
+    t->period_ticks = period_ticks;
 }
 
 AETHER_API u64 high_res_timer_arm(HighResTimer* t)

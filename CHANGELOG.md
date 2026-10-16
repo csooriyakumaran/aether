@@ -17,6 +17,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- aether: `high_res_timer_alloc`/`high_res_timer_set_rate` now `FATAL` when
+  the requested `hz` rounds `period_ticks` to `0` against the current
+  `os_time_frequency()`, instead of only asserting `hz > 0` (which says
+  nothing about an upper bound). The next `high_res_timer_wait()` divides
+  by `period_ticks` unconditionally once the timer is armed, so an
+  unbounded `hz` crashed in both build configurations — `AETHER_ASSERT_`
+  alone wouldn't have fixed this, since it compiles out in release;
+  `FATAL`'s `AETHER_DEBUG_BREAK()` traps unconditionally in every
+  configuration, matching the same-function's existing
+  `os_timer_create()`-failure precedent two lines above. Verified with a
+  standalone program: `high_res_timer_alloc(1e18)` now fails immediately
+  with a clear `FATAL ERROR: high_res_timer_alloc: hz too high...`
+  message instead of a silent divide-by-zero deep inside a later
+  `wait()`. No new test added — `FATAL` traps the process unconditionally,
+  so this isn't testable from inside the normal `ctest` harness without
+  subprocess-based test infrastructure this project doesn't have.
 - aether: `days_in_month_` now asserts `month >= 1 && month <= 12` instead
   of only an upper bound — `month == 0` previously underflowed
   `days[month-1]`. Safe today only because its sole caller
