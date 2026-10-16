@@ -1,6 +1,6 @@
 # Design: Minimal Threading Primitives
 
-Status: **designed; Thread declarations landed in `aether.h`, implementation pending** (updated 2026-07-13; revised to confine platform ifdefs to the `os_` layer — see decision 7).
+Status: **Thread implemented and shipped in `[0.0.13]`; Semaphore/Mutex (also covered by this design) not yet implemented** — see "Public API" below (design updated 2026-07-13; revised to confine platform ifdefs to the `os_` layer — see decision 7).
 Prerequisites already landed: public `atomic_load_acq_u64` / `atomic_store_rel_u64` (ATOMICS section), the SPSC-correct `RingBuffer`, and the `AETHER_API` linkage modes (extern / static / dllexport / dllimport).
 
 ## Motivation

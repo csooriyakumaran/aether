@@ -1,6 +1,6 @@
 # Design: Console Signal Handler
 
-Status: **designed, not yet implemented** (2026-08-03).
+Status: **implemented, shipped in `[0.0.14]`** (design written 2026-08-03).
 Prerequisites already landed: the `AETHER_API` linkage modes (extern / static /
 dllexport / dllimport), `internal`/`AETHER_OS_WINDOWS` platform macros, `FATAL`.
 No dependency on `RingBuffer`, atomics, or `Thread` despite sitting in the same
