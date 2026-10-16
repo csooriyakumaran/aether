@@ -8,11 +8,6 @@ target_link_libraries(test_arena
         aether::aether
 )
 
-# add_test(
-#     NAME arena
-#     COMMAND test_arena
-# )
-
 set(ARENA_TEST_CASES
     array_count alloc_basic alloc_ex_custom push_alignment push_array_contiguous
     push_macro_coverage zero_policy pop_to_and_pop temp_basic
@@ -36,8 +31,9 @@ target_link_libraries(test_strings
 )
 
 set(STRING_TEST_CASES eq cmp slice trim str_macro c_str split
-    skip_drop trim_lr eq_nocase prefix_suffix find cut concat fmt join
-    case_convert replace parse from_c_str)
+    split_trim_foreach skip_drop trim_lr eq_nocase prefix_suffix find cut
+    cut_ex concat fmt join case_convert replace parse parse_bases
+    parse_int_range parse_int_wrappers from_c_str utf8_decode utf8_width)
 
 foreach(case ${STRING_TEST_CASES})
     add_test(NAME str8_${case} COMMAND test_strings ${case})
@@ -95,7 +91,9 @@ target_link_libraries(test_ring
         aether::aether
 )
 
-set(RING_TEST_CASES mirror alloc roundtrip seam peek_no_consume available_advance guards stream counter_wrap spsc_stress)
+set(RING_TEST_CASES mirror alloc roundtrip seam peek_no_consume available_advance guards
+    stream counter_wrap reserve_commit_roundtrip reserve_seam reserve_guards reserve_cancel
+    reserve_partial_commit write_zero_preserves_reservation cache_line_layout spsc_stress)
 
 foreach(case ${RING_TEST_CASES})
     add_test(NAME ring_${case} COMMAND test_ring ${case})
@@ -126,7 +124,9 @@ target_link_libraries(test_networking
         aether::aether
 )
 
-set(NETWORKING_TEST_CASES context tcp_roundtrip udp_roundtrip)
+set(NETWORKING_TEST_CASES context parse_hostport parse_rejects_non_decimal
+    parse_hostport_trailing_colon addr_to_cstr_and_str8 tcp_roundtrip udp_roundtrip
+    socket_close_race)
 
 foreach(case ${NETWORKING_TEST_CASES})
     add_test(NAME iris_${case} COMMAND test_networking ${case})
@@ -161,9 +161,12 @@ target_link_libraries(test_timer
         aether::aether
 )
 
-set(TIMER_TEST_CASES alloc_basic wait_without_arm_is_safe arm_sets_state create_convenience
-    wait_paces_interval wait_reports_overrun rearm_resets_overrun_and_phase
-    set_rate_changes_period_only release_clears_state)
+set(TIMER_TEST_CASES alloc_basic alloc_clamps_spin_margin_high_rate alloc_uses_fixed_margin_low_rate
+    wait_without_arm_is_safe arm_sets_state create_convenience
+    wait_paces_interval wait_reports_overrun wait_sets_wake_time_on_success wait_sets_wake_time_on_overrun
+    rearm_resets_overrun_and_phase set_rate_changes_period_only release_clears_state
+    datetime_epoch_roundtrip datetime_leap_years datetime_to_ns_rejects_invalid
+    datetime_now_is_plausible wall_clock_ns_consistent)
 
 foreach(case ${TIMER_TEST_CASES})
     add_test(NAME timer_${case} COMMAND test_timer ${case})
