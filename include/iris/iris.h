@@ -250,7 +250,7 @@ IRIS_API NetAddr net_addr_any(u16 port);                    /* 0.0.0.0 - all int
 IRIS_API NetAddr net_addr_loopback(u16 port);               /* 127.0.0.1                */
 IRIS_API b8      net_addr_parse(str8 ip, u16 port, NetAddr* out); /* numeric only, no DNS */
 IRIS_API b8      net_addr_parse_hostport(str8 s, u16 default_port, NetAddr* out);
-IRIS_API u32     net_addr_to_cstr(NetAddr addr, char *buf, u64 buf_size);
+IRIS_API u32     net_addr_to_cstr(NetAddr addr, char* buf, u64 buf_size);
 IRIS_API str8    net_addr_to_str8(Arena* arena, NetAddr addr);
 
 typedef struct Socket { u64 handle; } Socket; /* {0} = invalid */
