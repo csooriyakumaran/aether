@@ -17,6 +17,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- iris: `os_tcp_listen` now checks the `SO_EXCLUSIVEADDRUSE` `setsockopt`
+  return value and closes+fails the socket on error, instead of
+  discarding it — matching the convention `os_tcp_accept`/`os_tcp_connect`
+  already use for their own `TCP_NODELAY` `setsockopt` check. `os_net_init`'s
+  failure path now also `memset`s the cached `WS2API` table to zero
+  before returning `false`, mirroring what `os_net_shutdown` already does.
+  Previously a caller that ignored `net_init`'s `false` return and called
+  e.g. `tcp_connect` anyway would call through dangling function pointers
+  into unloaded module memory; now it calls through `NULL` instead. No new
+  test added — inducing either failure path (a `setsockopt` rejection, or
+  a WinSock DLL load/`WSAStartup` failure) isn't feasible without a
+  mocking seam this project doesn't have.
 - aether: `arena_push`, `arena_pop`, `arena_pop_to`, `arena_clear`,
   `arena_begin_temp`, and `arena_end_temp` now all guard against a `NULL`
   arena explicitly, instead of relying on the nearby `AETHER_ASSERT_` as a

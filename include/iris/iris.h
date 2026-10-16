@@ -417,6 +417,7 @@ internal b8 os_net_init(void)
     {
         FreeLibrary(os_ws2_dll_);
         os_ws2_dll_ = NULL;
+        memset(&os_ws2_, 0, sizeof(os_ws2_));
         return false;
     }
     return true;
@@ -468,7 +469,11 @@ internal u64 os_tcp_listen(NetAddr addr, u32 backlog)
     if (s == INVALID_SOCKET) return 0;
 
     BOOL exclusive = TRUE;
-    (void)os_ws2_.setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&exclusive, sizeof(exclusive)); 
+    if (os_ws2_.setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*)&exclusive, sizeof(exclusive)) == SOCKET_ERROR)
+    {
+        os_socket_close(os_socket_from_raw_(s));
+        return 0;
+    }
 
     SOCKADDR_IN sa = os_addr_to_sockaddr_(addr);
     if (os_ws2_.bind(s, (SOCKADDR*)&sa, sizeof(sa)) == SOCKET_ERROR)
