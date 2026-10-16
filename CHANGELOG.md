@@ -17,6 +17,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- aether: `days_in_month_` now asserts `month >= 1 && month <= 12` instead
+  of only an upper bound — `month == 0` previously underflowed
+  `days[month-1]`. Safe today only because its sole caller
+  (`datetime_to_ns_since_epoch`) already validates `dt.month` before
+  calling it; this closes the "safe by the one caller" fragility rather
+  than relying on that staying true. No new test added — the project's
+  test binaries all define `AETHER_NO_ASSERT`, so an out-of-range `month`
+  passed directly to this internal helper wouldn't exercise the assert in
+  the standard test build anyway (same situation `test_overflow_guard`
+  works around by gating on `AETHER_ENABLE_ASSERTS`); the real contract
+  this protects is already covered by `datetime_to_ns_rejects_invalid`.
 - iris: `os_tcp_listen` now checks the `SO_EXCLUSIVEADDRUSE` `setsockopt`
   return value and closes+fails the socket on error, instead of
   discarding it — matching the convention `os_tcp_accept`/`os_tcp_connect`

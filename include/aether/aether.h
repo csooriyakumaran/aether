@@ -3261,7 +3261,7 @@ internal u8 days_in_month_(u32 year, u32 month)
 {
     persist const u8 days[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
     if (month == 2 && is_leap_year_(year)) return 29;
-    AETHER_ASSERT_(month <= 12);
+    AETHER_ASSERT_(month >= 1 && month <= 12);
     return days[month-1];
 }
 
