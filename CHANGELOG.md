@@ -17,6 +17,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- aether: `os_thread_set_affinity` now rejects `core_index >= 64` with
+  `false` instead of computing `(DWORD_PTR)1 << core_index` regardless —
+  a `DWORD_PTR` mask only has room for 64 logical processors (one
+  processor group on Windows), so a shift by `>= 64` is UB in C and
+  silently wraps to a shift-by-zero (core 0) on real x86/x64 hardware
+  instead of failing. Matches the existing `b8`-return convention
+  `thread_set_affinity`'s other failure path (`NULL` handle) already
+  uses. No new test added — there's no dedicated thread-API test file
+  yet to put one in (see `TODO.md`'s threading roadmap item).
 - hermes: `os_serial_read` now returns `SerialResult_OK` immediately when
   `cap == 0`, instead of calling into `ReadFile` and mapping its
   documented `read == 0` / `TRUE` (a legitimate zero-length no-op success)

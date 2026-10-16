@@ -1374,6 +1374,11 @@ internal b8 os_thread_set_priority(void* h, ThreadPriority p)
 internal b8 os_thread_set_affinity(void* h, u32 core_index)
 {
 #if AETHER_OS_WINDOWS
+    /* a DWORD_PTR mask only has room for 64 logical processors (one processor
+       group); core_index >= 64 would otherwise shift by >= the type's width,
+       UB in C and a silent wrap-to-core-0 on real x86/x64 hardware */
+    if (core_index >= 64) return false;
+
     DWORD_PTR mask = (DWORD_PTR)1 << core_index;
     return SetThreadAffinityMask((HANDLE)h, mask) != 0;
 
