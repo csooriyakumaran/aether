@@ -2685,6 +2685,7 @@ AETHER_API b8 args_parse(int argc, char** argv, ArgSpec* specs, u64 count, Arena
 {
     u64 next_pos = 0;
     if (out_err) *out_err = AETHER_LITERAL(str8){0};
+    for (u64 k = 0; k < count; ++k) specs[k].was_set = false;
 
     for (int i = 1; i < argc; ++i)
     {

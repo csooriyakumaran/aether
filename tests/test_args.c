@@ -346,6 +346,28 @@ static void test_was_set_tracking(void)
     ASSERT(str8_eq(args.name, STR("default")));
 }
 
+static void test_was_set_reset_across_calls(void)
+{
+    SECTION("args_parse: was_set is reset at the top of every call, so a reused ArgSpec table doesn't inherit stale state from a prior parse");
+
+    /* before this was fixed, was_set was written true but never reset anywhere in
+       args_parse -- a spec satisfied in one call stayed was_set == true forever, so
+       a second parse reusing the same table could omit a required field and the
+       required check would still silently pass */
+    BasicArgs args = {0};
+    ArgSpec opts[] = {
+        { STR("--name"), {0}, ArgKind_Str, &args.name, STR("V"), STR(""), false, true }, /* keyword, required */
+    };
+
+    char* argv_present[] = {"prog", "--name", "first"};
+    ASSERT(args_parse((int)ARRAY_COUNT(argv_present), argv_present, opts, ARRAY_COUNT(opts), NULL, NULL));
+    ASSERT(opts[0].was_set == true);
+
+    char* argv_missing[] = {"prog"}; /* --name omitted this time, same spec table reused */
+    ASSERT(!args_parse((int)ARRAY_COUNT(argv_missing), argv_missing, opts, ARRAY_COUNT(opts), NULL, NULL));
+    ASSERT(opts[0].was_set == false);
+}
+
 static void test_err_out_cleared_on_success(void)
 {
     SECTION("args_parse: *out_err is reset to empty on a successful parse, even if it held something before the call");
@@ -543,6 +565,7 @@ static TestCase g_cases[] = {
     {"required_positional",       test_required_positional_missing},
     {"required_keyword",          test_required_keyword_missing},
     {"was_set_tracking",          test_was_set_tracking},
+    {"was_set_reset_across_calls", test_was_set_reset_across_calls},
     {"err_out_cleared_on_success", test_err_out_cleared_on_success},
     {"has_flag_prescan",               test_has_flag_prescan},
     {"has_option_prescan",             test_has_option_prescan},

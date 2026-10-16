@@ -17,6 +17,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- aether: `args_parse` now resets every spec's `was_set` to `false` at the
+  top of the call, mirroring the existing `*out_err` reset for exactly the
+  same "no stale state across calls" reason. Previously `was_set` was
+  written `true` on a successful match but never reset anywhere, so a
+  caller that reuses or copies a previously-parsed `ArgSpec` table into a
+  second `args_parse` call (a REPL, subcommand dispatch, anything building
+  variants off a shared base table) inherited a stale `was_set == true`
+  from the earlier call, and the `required` check at the end of the
+  function silently passed even though the current `argv` never supplied
+  that field. New `was_set_reset_across_calls` case in `tests/test_args.c`.
 - aether: `args_parse`'s keyword branch now rejects an inline value attached
   to a `Flag`-kind option (`--verbose=false`, `--verbose=anything`) with a
   parse error instead of silently discarding the value and setting the flag
