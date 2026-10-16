@@ -17,6 +17,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `str8_has_prefix`/`str8_has_suffix` now treat an empty prefix/suffix as always matching (`str8_has_prefix(s, STR(""))` is now `true`, previously `false`), matching `str8_find`'s existing "empty needle matches" convention. Checked via `size == 0` rather than the data pointer, so both functions agree with each other and with a canonical empty `str8{0}` (`NULL` data) input, not just `STR("")`.
 
 ### Fixed
+- aether: `args_parse`'s keyword branch now rejects an inline value attached
+  to a `Flag`-kind option (`--verbose=false`, `--verbose=anything`) with a
+  parse error instead of silently discarding the value and setting the flag
+  `true` regardless of what followed the `=`. `has_inline`/`inline_val` were
+  already computed for every keyword option but were only ever consulted
+  when `spec->kind != ArgKind_Flag`; a `Flag` spec fell straight through to
+  `case ArgKind_Flag: *(b8*)spec->out = true;`. A truly empty `--verbose=`
+  is unaffected by this change and still sets the flag `true`, matching the
+  existing "an empty inline value is the same as no inline value at all"
+  convention (`has_inline` requires a non-empty value by definition). New
+  `flag_rejects_inline_value` case in `tests/test_args.c`.
 - aether: `str8_trim`/`str8_trim_left`/`str8_trim_right`/`str8_eq_nocase`/`str8_find`/`str8_find_last`/`str8_find_char`/`str8_has_prefix`/`str8_has_suffix` now guard against `NULL` data with `size > 0` via `AETHER_ASSERT_`, matching every other string-query function in the header. `str8_find`/`str8_find_last`/`str8_find_char` previously had no guard at all; `str8_has_prefix`/`str8_has_suffix` used a plain `if (!x)` that silently treated a `NULL` input as "no match" in both debug and release instead of flagging caller error.
 - aether: `str8_find`/`str8_find_last`/`str8_find_char` no longer unconditionally dereference their `pos` out-param — it's now optional (`if (pos) *pos = ...`), matching how iris's `out_recv`/`out_sent`/etc. already treat their out-params. Previously e.g. `str8_find(s, STR(""), NULL)` (empty needle, no `pos`) crashed on the unconditional write.
 - aether: `str8_find`/`str8_find_last`/`str8_find_char`'s out-param renamed `pos` → `out_pos`, matching the `out`/`out_*` convention every other single-out-param function in the header uses (`str8_to_u64`'s `out`, `os_file_size`'s `out_size`). No functional change — C has no named arguments, so no call site is affected.

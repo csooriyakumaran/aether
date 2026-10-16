@@ -85,6 +85,48 @@ static void test_alias_and_inline_value(void)
     ASSERT(str8_eq(a2.name, STR("inlined")));
 }
 
+static void test_flag_rejects_inline_value(void)
+{
+    SECTION("args_parse: a Flag-kind option with an inline value (--verbose=false) is a parse error, not a silently-true flag");
+
+    /* before this was fixed, has_inline/inline_val were computed but only consulted
+       when spec->kind != ArgKind_Flag -- a Flag spec fell straight into
+       `case ArgKind_Flag: *(b8*)spec->out = true;`, discarding the attached value
+       and setting the flag true regardless of what came after the "=" */
+    BasicArgs args = {0};
+    ArgSpec opts[] = { { STR("--verbose"), {0}, ArgKind_Flag, &args.help, {0}, STR("") } };
+
+    char* argv_false[] = {"prog", "--verbose=false"};
+    Arena* arena = arena_alloc(KB(4));
+    str8 err = {0};
+    ASSERT(!args_parse((int)ARRAY_COUNT(argv_false), argv_false, opts, ARRAY_COUNT(opts), arena, &err));
+    ASSERT(err.size > 0);
+    ASSERT(args.help == false);
+
+    args = (BasicArgs){0};
+    char* argv_anything[] = {"prog", "--verbose=anything"};
+    err = (str8){0};
+    ASSERT(!args_parse((int)ARRAY_COUNT(argv_anything), argv_anything, opts, ARRAY_COUNT(opts), arena, &err));
+    ASSERT(args.help == false);
+
+    /* "--verbose=" (truly empty after the "=") matches the project's existing "empty
+       inline value is the same as no inline value at all" convention -- it's not a
+       distinct value, so it's not a has_inline case, and the flag is just set true
+       the same as a bare "--verbose" would */
+    args = (BasicArgs){0};
+    char* argv_empty[] = {"prog", "--verbose="};
+    ASSERT(args_parse((int)ARRAY_COUNT(argv_empty), argv_empty, opts, ARRAY_COUNT(opts), NULL, NULL));
+    ASSERT(args.help == true);
+
+    /* a bare "--verbose", with no "=" at all, is unaffected -- still sets the flag */
+    args = (BasicArgs){0};
+    char* argv_bare[] = {"prog", "--verbose"};
+    ASSERT(args_parse((int)ARRAY_COUNT(argv_bare), argv_bare, opts, ARRAY_COUNT(opts), NULL, NULL));
+    ASSERT(args.help == true);
+
+    arena_release(arena);
+}
+
 typedef struct NumArgs
 {
     u8  u8v;  u16 u16v; u32 u32v; u64 u64v;
@@ -490,6 +532,7 @@ typedef struct { const char* name; void (*fn)(void); } TestCase;
 static TestCase g_cases[] = {
     {"flag_str_positional",       test_flag_str_and_positional},
     {"alias_and_inline_value",    test_alias_and_inline_value},
+    {"flag_rejects_inline_value", test_flag_rejects_inline_value},
     {"numeric_roundtrip",         test_numeric_kinds_roundtrip},
     {"numeric_zero_is_valid",     test_numeric_zero_is_a_valid_value},
     {"numeric_rejects_bad_value", test_numeric_kind_rejects_bad_value},

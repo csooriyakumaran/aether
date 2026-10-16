@@ -2730,6 +2730,11 @@ AETHER_API b8 args_parse(int argc, char** argv, ArgSpec* specs, u64 count, Arena
                 else if (i + 1 < argc) val = str8_from_c_str(argv[++i]);
                 else { if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " requires a value", STR8_ARG(spec->name)); return false; }
             }
+            else if (has_inline)
+            {
+                if (arena && out_err) *out_err = str8_push_fmt(arena, STR8_FMT " is a flag and takes no value, passed " STR8_FMT, STR8_ARG(spec->name), STR8_ARG(inline_val));
+                return false;
+            }
         }
 
         switch (spec->kind)
