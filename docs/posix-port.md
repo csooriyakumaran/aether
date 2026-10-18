@@ -137,6 +137,18 @@ tuning may want a smaller platform default — measure before changing.
   and delete the ad-hoc wrappers.
 - Build: no build system changes expected (header-only); test compile lines
   on Linux need `-lpthread` only for older glibc (< 2.34 folds it into libc).
+- Build: `f32_sin`/`f32_cos`/`f32_tan` (and their `f64` siblings) call into
+  `libm` on GCC/Clang — unlike `f32_sqrt`/`f64_sqrt`, which lower to a
+  hardware instruction (`SQRTSS`/`FSQRT`) with no library call at all,
+  there's no equivalent hardware transcendental instruction on SSE2 or
+  NEON (see `docs/vec-math-design.md` decision 11 for why sqrt specifically
+  avoids this and trig can't). `aether` is an `INTERFACE` CMake target with
+  no Linux build yet to carry a link flag; once one exists, propagate
+  `-lm` the same way `-lpthread` is noted above, rather than leaving every
+  consumer to discover the missing symbol themselves. Needed once
+  `mat4_rotate`/`mat4_perspective`/`quat_from_axis_angle` land and actually
+  call the trig wrappers (`docs/graphics-platform-design.md`) — not yet,
+  since nothing calls them today.
 
 ## Suggested order of attack
 

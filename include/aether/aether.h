@@ -59,6 +59,7 @@
   - AETHER_NO_ARRAY_COUNT:     skips defining ARRAY_COUNT if not already defined
   - AETHER_NO_NUMERIC_LIMITS:  skips defining *_MIN / *_MAX-style limits
                                e.g., for I8/I16/I32/I64/U8/U16/U32/U64
+  - AETHER_NO_SIMD:            opts out of simd operations (e.g., for vec4)
 
 \*---------------------------------------------------------------------------*/
 #ifndef AETHER_H_
@@ -215,6 +216,31 @@
     #define AETHER_API extern
 #endif
 
+#if AETHER_COMPILER_MSVC
+    #define AETHER_INLINE static __forceinline
+#else
+    #define AETHER_INLINE static inline __attribute__((always_inline))
+#endif
+
+#if defined(AETHER_NO_SIMD)
+    #define AETHER_SIMD_SSE  0
+    #define AETHER_SIMD_NEON 0
+#elif AETHER_ARCH_X64
+    #define AETHER_SIMD_SSE  1
+    #define AETHER_SIMD_NEON 0
+#elif AETHER_ARCH_ARM64
+    #define AETHER_SIMD_SSE  0
+    #define AETHER_SIMD_NEON 1
+#else
+    #define AETHER_SIMD_SSE  0
+    #define AETHER_SIMD_NEON 0
+#endif
+
+#if AETHER_SIMD_SSE
+    #include <xmmintrin.h> /* __m128 + SSE1 ops -- add/sub/mul/div/shuffle/set1, all baseline x86-64 */
+#elif AETHER_SIMD_NEON
+    #include <arm_neon.h> /* float32x4_t + NEON ops, baseline AArch64 */
+#endif
 
 /*---------------------------------------------------------------------------*/
 
@@ -404,6 +430,27 @@ typedef u32                b32; AETHER_STATIC_ASSERT(sizeof(b32) == 4, "b32 != 4
 typedef struct bytes {       u8* data; u64 size; } bytes;
 typedef struct view  { const u8* data; u64 size; } view;
 
+typedef union vec2 vec2;
+typedef union vec3 vec3;
+typedef union vec4 vec4;
+typedef union mat4 mat4;
+typedef union quat quat;
+
+/*-------- B I T - M A S K S ------------------------------------------------*/
+
+#define BIT8(x)  ((u8)  (1u   << (x)))
+#define BIT16(x) ((u16) (1u   << (x)))
+#define BIT32(x) ((u32) (1u   << (x)))
+#define BIT64(x) ((u64) (1ull << (x)))
+
+#define BIT(x) BIT64(x)
+
+#define KB(n) (((u64)(n)) << 10)
+#define MB(n) (((u64)(n)) << 20)
+#define GB(n) (((u64)(n)) << 30)
+#define TB(n) (((u64)(n)) << 40)
+
+
 /*-------- A T O M I C S ----------------------------------------------------*/
 
 AETHER_STATIC_ASSERT(sizeof(void*) == 8, "aether atomics require a 64-bit target");
@@ -427,7 +474,7 @@ AETHER_STATIC_ASSERT(sizeof(void*) == 8, "aether atomics require a 64-bit target
     #endif
 #endif
 
-static inline u64 atomic_load_acq_u64(const u64* p)
+AETHER_INLINE u64 atomic_load_acq_u64(const u64* p)
 {
 #if AETHER_ATOMICS_GNU
     return __atomic_load_n(p, __ATOMIC_ACQUIRE);
@@ -438,7 +485,7 @@ static inline u64 atomic_load_acq_u64(const u64* p)
 #endif 
 }
 
-static inline void atomic_store_rel_u64(u64* p, u64 v)
+AETHER_INLINE void atomic_store_rel_u64(u64* p, u64 v)
 {
 #if AETHER_ATOMICS_GNU
     __atomic_store_n(p, v, __ATOMIC_RELEASE);
@@ -455,7 +502,7 @@ static inline void atomic_store_rel_u64(u64* p, u64 v)
  *  returns true if swap occurred, false if *p no longer matches 
  *  expected (in which case *p is untouched).
  */
-static inline b8 atomic_cas_u64(u64* p, u64 expected, u64 desired)
+AETHER_INLINE b8 atomic_cas_u64(u64* p, u64 expected, u64 desired)
 {
 #if AETHER_ATOMICS_GNU
     return __atomic_compare_exchange_n(p, &expected, desired, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
@@ -465,19 +512,219 @@ static inline b8 atomic_cas_u64(u64* p, u64 expected, u64 desired)
 #endif 
 }
 
-/*---------------------------------------------------------------------------*/
+/*-------- C O M P I L E R - B U I L T - I N --------------------------------*/
 
-#define BIT8(x)  ((u8)  (1u   << (x)))
-#define BIT16(x) ((u16) (1u   << (x)))
-#define BIT32(x) ((u32) (1u   << (x)))
-#define BIT64(x) ((u64) (1ull << (x)))
+#if AETHER_COMPILER_MSVC
+    #include <math.h> /* sqrtf is compiler-recognized under /Oi; CRT math is always linked on Windows */
+    AETHER_INLINE f32 f32_sqrt(f32 x) { return sqrtf(x); }
+    AETHER_INLINE f32 f32_sin(f32 x)  { return sinf(x); }
+    AETHER_INLINE f32 f32_cos(f32 x)  { return cosf(x); }
+    AETHER_INLINE f32 f32_tan(f32 x)  { return tanf(x); }
 
-#define BIT(x) BIT64(x)
+    AETHER_INLINE f64 f64_sqrt(f64 x) { return sqrt(x); }
+    AETHER_INLINE f64 f64_sin(f64 x)  { return sin(x); }
+    AETHER_INLINE f64 f64_cos(f64 x)  { return cos(x); }
+    AETHER_INLINE f64 f64_tan(f64 x)  { return tan(x); }
+#else
+    AETHER_INLINE f32 f32_sqrt(f32 x) { return __builtin_sqrtf(x); }
+    AETHER_INLINE f32 f32_sin(f32 x)  { return __builtin_sinf(x); }
+    AETHER_INLINE f32 f32_cos(f32 x)  { return __builtin_cosf(x); }
+    AETHER_INLINE f32 f32_tan(f32 x)  { return __builtin_tanf(x); }
 
-#define KB(n) (((u64)(n)) << 10)
-#define MB(n) (((u64)(n)) << 20)
-#define GB(n) (((u64)(n)) << 30)
-#define TB(n) (((u64)(n)) << 40)
+    AETHER_INLINE f64 f64_sqrt(f64 x) { return __builtin_sqrt(x); }
+    AETHER_INLINE f64 f64_sin(f64 x)  { return __builtin_sin(x); }
+    AETHER_INLINE f64 f64_cos(f64 x)  { return __builtin_cos(x); }
+    AETHER_INLINE f64 f64_tan(f64 x)  { return __builtin_tan(x); }
+#endif
+
+
+/*-------- V E C T O R - M A T H --------------------------------------------*/
+
+/* vec4 SIMD */
+#if AETHER_SIMD_SSE
+    typedef __m128 v128_;
+    AETHER_INLINE v128_ v128_add_(v128_ a, v128_ b) { return _mm_add_ps(a, b); }
+    AETHER_INLINE v128_ v128_sub_(v128_ a, v128_ b) { return _mm_sub_ps(a, b); }
+    AETHER_INLINE v128_ v128_mul_(v128_ a, v128_ b) { return _mm_mul_ps(a, b); }
+    AETHER_INLINE v128_ v128_div_(v128_ a, v128_ b) { return _mm_div_ps(a, b); }
+    AETHER_INLINE v128_ v128_splat_(f32 s)          { return _mm_set1_ps(s); }
+    AETHER_INLINE v128_ v128_negate_(v128_ a)       { return _mm_sub_ps(_mm_setzero_ps(), a); }
+    AETHER_INLINE f32   v128_hsum_(v128_ a) /* SSE2-only horizontal sum -- no __mm_dp_ps, that's SSE4.1 */
+    {
+        __m128 shuf = _mm_shuffle_ps(a, a, _MM_SHUFFLE(2, 3, 0, 1));
+        __m128 sums = _mm_add_ps(a, shuf);
+        shuf        = _mm_movehl_ps(shuf, sums);
+        sums        = _mm_add_ps(sums, shuf);
+        return _mm_cvtss_f32(sums);
+    }
+#elif AETHER_SIMD_NEON
+    typedef float32x4_t v128_;
+    AETHER_INLINE v128_ v128_add_(v128_ a, v128_ b) { return vaddq_f32(a, b); }
+    AETHER_INLINE v128_ v128_sub_(v128_ a, v128_ b) { return vsubq_f32(a, b); }
+    AETHER_INLINE v128_ v128_mul_(v128_ a, v128_ b) { return vmulq_f32(a, b); }
+    AETHER_INLINE v128_ v128_div_(v128_ a, v128_ b) { return vdivq_f32(a, b); }
+    AETHER_INLINE v128_ v128_splat_(f32 s)          { return vdupq_n_f32(s); }
+    AETHER_INLINE v128_ v128_negate_(v128_ a)       { return vnegq_f32(a); }
+    AETHER_INLINE f32   v128_hsum_(v128_ a)         { return vaddvq_f32(a); } /* AArch64-only, fine -- 64-bit-only gate already */
+#else /* scalar fallback: AETHER_NO_SIMD, or neither backend selected */
+    typedef struct { f32 e[4]; } v128_;
+    AETHER_INLINE v128_ v128_add_(v128_ a, v128_ b) { v128_ r; for (u64 i=0; i<4; ++i) r.e[i] = a.e[i] + b.e[i]; return r;}
+    AETHER_INLINE v128_ v128_sub_(v128_ a, v128_ b) { v128_ r; for (u64 i=0; i<4; ++i) r.e[i] = a.e[i] - b.e[i]; return r;}
+    AETHER_INLINE v128_ v128_mul_(v128_ a, v128_ b) { v128_ r; for (u64 i=0; i<4; ++i) r.e[i] = a.e[i] * b.e[i]; return r;}
+    AETHER_INLINE v128_ v128_div_(v128_ a, v128_ b) { v128_ r; for (u64 i=0; i<4; ++i) r.e[i] = a.e[i] / b.e[i]; return r;}
+    AETHER_INLINE v128_ v128_splat_(f32 s)          { v128_ r; for (u64 i=0; i<4; ++i) r.e[i] = s; return r;}
+    AETHER_INLINE v128_ v128_negate_(v128_ a)       { v128_ r; for (u64 i=0; i<4; ++i) r.e[i] = -a.e[i]; return r;}
+    AETHER_INLINE f32   v128_hsum_(v128_ a)         { return a.e[0] + a.e[1] + a.e[2] + a.e[3]; }
+#endif
+
+union vec2
+{
+    f32 e[2];
+    struct { f32 x, y; };
+    struct { f32 u, v; };
+};
+
+union vec3
+{
+    f32 e[3];
+    struct { f32  x, y, z; };
+    struct { f32  r, g, b; };
+    struct { vec2 xy; f32 _z0; };
+    struct { f32 _x0; vec2 yz; };
+};
+
+union vec4
+{
+    f32 e[4];
+    struct { f32 x, y, z, w; };
+    struct { f32 r, g, b, a; };
+    struct { vec2 xy; f32 _z0, _w0; }; 
+    struct { f32 _x1; vec2 yz; f32 _w1; }; 
+    struct { vec3 xyz; f32 _w2; }; 
+    struct { vec3 rgb; f32 _a0; };
+    v128_  simd;
+};
+
+union mat4 { f32 e[16]; vec4 col[4]; f32 m[4][4]; };
+union quat { f32 e[4]; struct { f32 x, y, z, w; }; struct { vec3 xyz; f32 _w0p; }; v128_ simd; };
+
+AETHER_STATIC_ASSERT(sizeof(vec2) ==  2 * sizeof(f32), "layout: vec2 !=  8 bytes");
+AETHER_STATIC_ASSERT(sizeof(vec3) ==  3 * sizeof(f32), "layout: vec3 != 12 bytes");
+AETHER_STATIC_ASSERT(sizeof(vec4) ==  4 * sizeof(f32), "layout: vec4 != 16 bytes");
+AETHER_STATIC_ASSERT(sizeof(quat) ==  4 * sizeof(f32), "layout: quat != 16 bytes");
+AETHER_STATIC_ASSERT(sizeof(mat4) == 16 * sizeof(f32), "layout: quat != 64 bytes");
+
+AETHER_INLINE f32  f32_lerp(f32 a, f32 b, f32 t) { return (1.0f - t) * a + t * b; }
+
+/* ---- V E C T O R - O P E R A T I O N S -----------------------------------*/
+
+/* element-wise operations */
+AETHER_INLINE vec2 vec2_add(vec2 a, vec2 b) { vec2 v; for (u64 i = 0; i < 2; ++i) v.e[i] = a.e[i] + b.e[i]; return v; }
+AETHER_INLINE vec2 vec2_sub(vec2 a, vec2 b) { vec2 v; for (u64 i = 0; i < 2; ++i) v.e[i] = a.e[i] - b.e[i]; return v; }
+AETHER_INLINE vec2 vec2_mul(vec2 a, vec2 b) { vec2 v; for (u64 i = 0; i < 2; ++i) v.e[i] = a.e[i] * b.e[i]; return v; }
+AETHER_INLINE vec2 vec2_div(vec2 a, vec2 b) { vec2 v; for (u64 i = 0; i < 2; ++i) v.e[i] = a.e[i] / b.e[i]; return v; }
+
+AETHER_INLINE vec3 vec3_add(vec3 a, vec3 b) { vec3 v; for (u64 i = 0; i < 3; ++i) v.e[i] = a.e[i] + b.e[i]; return v; }
+AETHER_INLINE vec3 vec3_sub(vec3 a, vec3 b) { vec3 v; for (u64 i = 0; i < 3; ++i) v.e[i] = a.e[i] - b.e[i]; return v; }
+AETHER_INLINE vec3 vec3_mul(vec3 a, vec3 b) { vec3 v; for (u64 i = 0; i < 3; ++i) v.e[i] = a.e[i] * b.e[i]; return v; }
+AETHER_INLINE vec3 vec3_div(vec3 a, vec3 b) { vec3 v; for (u64 i = 0; i < 3; ++i) v.e[i] = a.e[i] / b.e[i]; return v; }
+
+AETHER_INLINE vec4 vec4_add(vec4 a, vec4 b) { vec4 v; v.simd = v128_add_(a.simd, b.simd); return v; }
+AETHER_INLINE vec4 vec4_sub(vec4 a, vec4 b) { vec4 v; v.simd = v128_sub_(a.simd, b.simd); return v; }
+AETHER_INLINE vec4 vec4_mul(vec4 a, vec4 b) { vec4 v; v.simd = v128_mul_(a.simd, b.simd); return v; }
+AETHER_INLINE vec4 vec4_div(vec4 a, vec4 b) { vec4 v; v.simd = v128_div_(a.simd, b.simd); return v; }
+
+/* scalar ops */
+AETHER_INLINE vec2 vec2_scale(vec2 a, f32 s) { vec2 v; for (u64 i = 0; i < 2; ++i) v.e[i] = s * a.e[i]; return v; }
+AETHER_INLINE vec3 vec3_scale(vec3 a, f32 s) { vec3 v; for (u64 i = 0; i < 3; ++i) v.e[i] = s * a.e[i]; return v; }
+AETHER_INLINE vec4 vec4_scale(vec4 a, f32 s) { vec4 v; v.simd = v128_mul_(a.simd, v128_splat_(s)); return v; }
+
+AETHER_INLINE vec2 vec2_negate(vec2 a) { return vec2_scale(a, -1.0f); }
+AETHER_INLINE vec3 vec3_negate(vec3 a) { return vec3_scale(a, -1.0f); }
+AETHER_INLINE vec4 vec4_negate(vec4 a) { vec4 v; v.simd = v128_negate_(a.simd); return v; }
+
+/* dot product */
+AETHER_INLINE f32  vec2_dot(vec2 a, vec2 b) { return a.x*b.x + a.y*b.y; }
+AETHER_INLINE f32  vec3_dot(vec3 a, vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+AETHER_INLINE f32  vec4_dot(vec4 a, vec4 b) { return v128_hsum_(v128_mul_(a.simd, b.simd)); }
+
+/* magnitide */
+AETHER_INLINE f32  vec2_mag_sq(vec2 a) { return vec2_dot(a, a); }
+AETHER_INLINE f32  vec3_mag_sq(vec3 a) { return vec3_dot(a, a); }
+AETHER_INLINE f32  vec4_mag_sq(vec4 a) { return vec4_dot(a, a); }
+
+AETHER_INLINE f32  vec2_magnitude(vec2 a) { return f32_sqrt(vec2_mag_sq(a)); }
+AETHER_INLINE f32  vec3_magnitude(vec3 a) { return f32_sqrt(vec3_mag_sq(a)); }
+AETHER_INLINE f32  vec4_magnitude(vec4 a) { return f32_sqrt(vec4_mag_sq(a)); }
+
+/* normalize */
+AETHER_INLINE vec2 vec2_normalize(vec2 a) { AETHER_ASSERT_(vec2_mag_sq(a) > 0.0f); return vec2_scale(a, 1.0f / vec2_magnitude(a)); }
+AETHER_INLINE vec3 vec3_normalize(vec3 a) { AETHER_ASSERT_(vec3_mag_sq(a) > 0.0f); return vec3_scale(a, 1.0f / vec3_magnitude(a)); }
+AETHER_INLINE vec4 vec4_normalize(vec4 a) { AETHER_ASSERT_(vec4_mag_sq(a) > 0.0f); return vec4_scale(a, 1.0f / vec4_magnitude(a)); }
+
+/* linear interpolation */
+AETHER_INLINE vec2 vec2_lerp(vec2 a, vec2 b, f32 t) { vec2 v; for (u64 i = 0; i < 2; ++i) v.e[i] = f32_lerp(a.e[i], b.e[i], t); return v; }
+AETHER_INLINE vec3 vec3_lerp(vec3 a, vec3 b, f32 t) { vec3 v; for (u64 i = 0; i < 3; ++i) v.e[i] = f32_lerp(a.e[i], b.e[i], t); return v; }
+AETHER_INLINE vec4 vec4_lerp(vec4 a, vec4 b, f32 t) { vec4 v; v.simd = v128_add_(v128_mul_(a.simd, v128_splat_(1.0f - t)), v128_mul_(b.simd, v128_splat_(t))); return v; }
+
+/* equality */
+AETHER_INLINE b8   vec2_eq(vec2 a, vec2 b) { for (u64 i = 0; i < 2; ++i) if (a.e[i] != b.e[i]) return false; return true; }
+AETHER_INLINE b8   vec3_eq(vec3 a, vec3 b) { for (u64 i = 0; i < 3; ++i) if (a.e[i] != b.e[i]) return false; return true; }
+AETHER_INLINE b8   vec4_eq(vec4 a, vec4 b) { for (u64 i = 0; i < 4; ++i) if (a.e[i] != b.e[i]) return false; return true; }
+
+AETHER_INLINE b8   vec2_eq_approx(vec2 a, vec2 b, f32 epsilon) { return vec2_mag_sq(vec2_sub(b, a)) < epsilon*epsilon; }
+AETHER_INLINE b8   vec3_eq_approx(vec3 a, vec3 b, f32 epsilon) { return vec3_mag_sq(vec3_sub(b, a)) < epsilon*epsilon; }
+AETHER_INLINE b8   vec4_eq_approx(vec4 a, vec4 b, f32 epsilon) { return vec4_mag_sq(vec4_sub(b, a)) < epsilon*epsilon; }
+
+/* cross product */
+AETHER_INLINE vec3 vec3_cross(vec3 a, vec3 b) { vec3 v = { a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x }; return v; }
+
+/* ---- M A T R I X - O P E R A T I O N S -----------------------------------*/
+
+AETHER_INLINE mat4 mat4_identity(void) { mat4 m = {0}; for (u64 i = 0; i < 4; ++i) m.m[i][i] = 1.0f; return m; }
+AETHER_INLINE mat4 mat4_mul(mat4 a, mat4 b) { mat4 m = {0}; for (u64 i = 0; i < 4; ++i) for (u64 j = 0; j < 4; ++j) for (u64 k = 0; k < 4; ++k) m.m[i][j] += a.m[i][k] * b.m[k][j]; return m; }
+AETHER_INLINE vec4 mat4_mul_vec4(mat4 m, vec4 v)
+{
+    vec4 r = vec4_scale(m.col[0], v.x);
+    r = vec4_add(r, vec4_scale(m.col[1], v.y));
+    r = vec4_add(r, vec4_scale(m.col[2], v.z));
+    r = vec4_add(r, vec4_scale(m.col[3], v.w));
+    return r;
+}
+/* Scaffold only -- declared to lock the draft API surface from
+   docs/vec-math-design.md's mat4/quat section, not yet implemented. */
+AETHER_INLINE mat4 mat4_transpose(mat4 m);
+AETHER_INLINE mat4 mat4_affine_inverse(mat4 m); /* fast path: assumes bottom row [0, 0, 0, 1] */
+AETHER_INLINE mat4 mat4_inverse(mat4 m); /* general, slower */
+
+/* translate/scale/rotate are general affine-transform construction, same
+   tier as the rest of this file's math -- these likely stay in aether.h
+   permanently. perspective/look_at are genuinely camera/rendering-pipeline
+   concepts, better candidates for an eventual gfx module -- but no such
+   module exists yet (docs/graphics-platform-design.md keeps this inside
+   the example until a second consumer or a settled shape justifies
+   promotion, same precedent as iris/hermes before they became modules).
+   Staying here for now either way. */
+AETHER_INLINE mat4 mat4_translate(vec3 t);
+AETHER_INLINE mat4 mat4_scale(vec3 s);
+AETHER_INLINE mat4 mat4_rotate(vec3 axis, f32 angle_rad);
+AETHER_INLINE mat4 mat4_perspective(f32 fov_y_rad, f32 aspect, f32 z_near, f32 z_far);
+AETHER_INLINE mat4 mat4_look_at(vec3 eye, vec3 target, vec3 up);
+
+/* ---- Q U A T E R N I O N S -----------------------------------------------*/
+
+/* Same question as mat4's construction helpers above, same answer: no gfx
+   module exists yet to move these to. rotate_vec3/slerp/to_mat4 are general
+   enough (animation, robotics orientation) to likely stay permanently
+   regardless. */
+AETHER_INLINE quat quat_identity(void) { quat q = {0.0f, 0.0f, 0.0f, 1.0f}; return q; }
+AETHER_INLINE quat quat_from_axis_angle(vec3 axis, f32 angle_rad);
+AETHER_INLINE quat quat_mul(quat a, quat b); /* Hamilton product, not compontent-wise */
+AETHER_INLINE quat quat_conjugate(quat a);
+AETHER_INLINE quat quat_normalize(quat q); /* same shape as vec4 normalize */
+AETHER_INLINE vec3 quat_rotate_vec3(quat q, vec3 v);
+AETHER_INLINE quat quat_slerp(quat a, quat b, f32 t);
+AETHER_INLINE mat4 quat_to_mat4(quat q);
 
 /*-------- A R E N A S ------------------------------------------------------*/
 
@@ -519,7 +766,7 @@ AETHER_API void   arena_pop_to(Arena* arena, u64 pos);
 AETHER_API void   arena_pop(Arena* arena, u64 amt);
 AETHER_API void   arena_clear(Arena* arena);
 
-static inline void* arena_push_array_(Arena* arena, u64 elem_size, u64 align, u64 count, ArenaZero zero)
+AETHER_INLINE void* arena_push_array_(Arena* arena, u64 elem_size, u64 align, u64 count, ArenaZero zero)
 {
     if (elem_size != 0 && count > AETHER_U64_MAX_ / elem_size) { AETHER_ASSERT_(!"arena_push array overflow"); return NULL; }
     return arena_push(arena, elem_size * count, align, zero);
@@ -585,7 +832,7 @@ AETHER_API b8         ring_buffer_write(RingBuffer* rb, const void* src, u64 len
  *    of nul-termination
  */
 typedef struct str8 { const u8* data; u64 size; } str8;
-static inline str8 str8_from_view(view v){ str8 s = {v.data, v.size}; return s; }
+AETHER_INLINE str8 str8_from_view(view v){ str8 s = {v.data, v.size}; return s; }
 
 /*STRING LITERALS ONLY: decays silently on pointers */
 #define STR(s) (AETHER_LITERAL(str8){ (const u8*)(s), sizeof(s) - 1 })

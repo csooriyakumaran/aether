@@ -18,6 +18,7 @@ It provides a minimal set of common primitives:
 - threads (create/join, priority control, yield, high-resolution sleep)
 - ring / circular buffers (virtually-mirrored — reads and writes that wrap the end stay a single contiguous copy; safe across one producer and one consumer thread)
 - timing helpers
+- fixed-size vector math (`vec2`/`vec3`/`vec4`, swizzled position/color/texcoord views over the same storage)
 
 The intent is not to be a framework, but rather a lightweight foundation that can be included in other libraries or applications. The motivation is to share primitives between different aerodynamic solver codes.
 
@@ -39,6 +40,7 @@ Two companion single-header modules build directly on top of aether, in the same
   - [Threads](#threads)
   - [Console Signal](#console-signal)
   - [Ring Buffers](#ring-buffers)
+  - [Vector Math](#vector-math)
 - [IRIS](#iris)
   - [IRIS Requirements](#iris-requirements)
   - [IRIS Integration](#iris-integration)
@@ -830,6 +832,51 @@ ring_buffer_commit(&rb, used);                 /* unused tail of the reservation
 If the message can't be completed after all (an encode error, say), `ring_buffer_cancel_reservation(&rb)` drops it without touching `write` — the freed span is available to the next `reserve`.
 
 `ring_buffer_write` is implemented on top of this same `reserve` + `commit` pair, so both paths share one definition of "is there room" — there is no separate check to fall out of sync.
+
+## Vector Math
+
+AETHER provides fixed-size `f32` vector types for graphics-style math — positions, directions, normals, colors, texture coordinates — passed by value and inlined (`AETHER_INLINE` in the header) into the hot per-vertex/per-frame code that calls them:
+
+```c
+vec2 /* { x,y } or { u,v } */
+vec3 /* { x,y,z } or { r,g,b }, plus vec2 sub-views .xy/.yz */
+vec4 /* { x,y,z,w } or { r,g,b,a }, plus .xy/.yz/.xyz/.rgb sub-views */
+
+vec3_add / vec3_sub / vec3_mul / vec3_div (componentwise) / vec3_scale / vec3_negate
+vec3_dot / vec3_cross (vec3 only)
+vec3_mag_sq / vec3_magnitude / vec3_normalize
+vec3_lerp
+vec3_eq (exact) / vec3_eq_approx (Euclidean tolerance)
+```
+`vec2_*`/`vec4_*` mirror the same shape (no `cross` outside `vec3`).
+
+Each type is a bare `union`, not a struct wrapping one — `x`, `r`, and `e[0]` are three names for the same four bytes, so writing through one and reading through another is always up to date, no copy involved:
+
+```c
+vec3 v = {0};
+v.x = 1.0f; v.y = 2.0f; v.z = 3.0f;
+
+v.r == 1.0f;        /* true -- same storage as .x */
+v.e[0] == 1.0f;     /* true -- same storage as .x */
+v.xy.x == 1.0f;     /* true -- the leading two components as a vec2 view */
+```
+
+> [!NOTE]
+> The anonymous-struct members that make this possible are standard C11 but not standard C++ (a universally-supported GNU/MS extension in practice, but not ISO C++). `tests/verify_cxx11.cpp` accepts this as a deliberate, documented exception — it builds under `-pedantic` (warn) rather than `-pedantic-errors` (fail) on GCC/Clang, and MSVC's `/permissive-` never gated this extension in the first place. See `docs/vec-math-design.md` decision 3 for the full rationale.
+
+`normalize` on a zero-length vector is a decided case, not an accident: it `AETHER_ASSERT_`s in a debug build, and falls through to `{NaN, NaN, NaN}` in release (`1.0f/0.0f` → `+inf`, `0.0f*inf` → `NaN`) rather than leaving the result to whatever the division happens to produce.
+
+```c
+vec3 a = {1, 0, 0}, b = {0, 1, 0};
+vec3 up = vec3_normalize(vec3_cross(a, b));   /* {0, 0, 1} */
+
+vec3 start = {0,0,0}, end = {10,0,0};
+vec3 mid   = vec3_lerp(start, end, 0.5f);     /* {5,0,0}, exact at t=0 and t=1 */
+```
+
+`vec4` additionally carries an SSE2/NEON SIMD backing — a `.simd` union member that every `vec4_add`/`sub`/`mul`/`div`/`scale`/`negate`/`dot`/`lerp` call routes through automatically, selected by architecture at compile time (`vec2`/`vec3` stay scalar; `vec3` doesn't fit a 128-bit lane without either breaking its own layout guarantee or risking an out-of-bounds load). Define `AETHER_NO_SIMD` before including the header to force the plain scalar fallback instead — for stepping through non-vectorized code in a debugger, or comparing scalar and SIMD results against each other, matching the existing `AETHER_NO_ASSERT`-style opt-out convention. Benchmarked before trusting it: no measurable win for a single `vec4` computed serially (SIMD's advantage needs independent, batchable work to show up at all), but a consistent ~2.4–2.7x speedup processing an array of independent `vec4`s — see `docs/vec-math-design.md` decisions 14–15 for the methodology and the numbers.
+
+See `docs/vec-math-design.md` for the full rationale (naming, the union-vs-struct-wrapper choice, why `uv` means texture coordinates here and not velocity, the `f32_sqrt`/`f64_sqrt`/trig compiler-builtin wrappers that keep `magnitude` from needing a `libm` link on Linux) — `mat4`/`quat` types exist with `identity`/`mul`/`mul_vec4` implemented; the rest of that draft surface (`transpose`/`inverse`/`translate`/`scale`/`rotate`/`perspective`/`look_at`, `mat3`, most of `quat`) is declared but not yet implemented, pending the next design pass.
 
 # IRIS
 
